@@ -288,7 +288,7 @@ export class QQBridge {
 
   // ===== 出站 =====
 
-  /** 发送文本回复：按配额分段，每段递增 msg_seq */
+  /** 发送回复：按配额分段，每段递增 msg_seq。内容按 markdown 发送。 */
   private async sendReply(chatId: string, text: string): Promise<void> {
     const target = decodeQQChatId(chatId)
     const msgId = this.lastMsgIds.get(chatId)
@@ -298,7 +298,7 @@ export class QQBridge {
     }
 
     for (const chunk of chunkReply(text, target.kind)) {
-      await this.api.sendText(target.kind, target.openid, chunk, msgId, this.msgSeq.next(msgId))
+      await this.api.sendMarkdown(target.kind, target.openid, chunk, msgId, this.msgSeq.next(msgId))
     }
   }
 

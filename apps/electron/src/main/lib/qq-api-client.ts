@@ -52,12 +52,20 @@ export class QQApiClient {
   }
 
   /**
-   * 发送文本消息（被动回复）
+   * 发送 markdown 消息（被动回复）
+   *
+   * 用 msg_type 2 + markdown.content 走自定义 markdown —— 按官方 2026/04/23 的能力
+   * 更新，单聊与群聊的自定义 markdown 已对所有机器人开放，无需申请模板。
+   * Agent 的回复本身就是 markdown，发纯文本会让用户看到满屏 ** 和 -。
+   *
+   * 注意：官方列出的支持语法里**没有代码块与表格**，也未说明长度上限、转义规则、
+   * 以及不支持语法的降级方式。这里按产品决定不做预处理，原样发送；若实际渲染不佳，
+   * 把 msg_type 改回 TEXT、content 换成 text 即可退回纯文本。
    *
    * @param msgId 收到的消息 id，被动回复必须带上
    * @param msgSeq 同一 msgId 的第几次回复，从 1 开始递增
    */
-  async sendText(
+  async sendMarkdown(
     kind: QQTargetKind,
     openid: string,
     text: string,
@@ -65,8 +73,10 @@ export class QQApiClient {
     msgSeq: number,
   ): Promise<QQSendMessageResult> {
     return this.request<QQSendMessageResult>('POST', this.messagePath(kind, openid), {
-      content: text,
-      msg_type: QQ_MSG_TYPE.TEXT,
+      // markdown 消息仍需带 content 字段（留空），与官方 SDK 的负载结构一致
+      content: '',
+      msg_type: QQ_MSG_TYPE.MARKDOWN,
+      markdown: { content: text },
       msg_id: msgId,
       msg_seq: msgSeq,
     })

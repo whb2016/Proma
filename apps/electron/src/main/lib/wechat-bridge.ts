@@ -161,6 +161,12 @@ interface UploadedMedia {
 
 // ===== 工具函数 =====
 
+/**
+ * 生成 X-WECHAT-UIN 头的值：随机 4 字节 → uint32 → 十进制字符串 → base64
+ *
+ * 协议要求**每次请求重新生成**，因此调用点在 post() 内部而不是构造函数。
+ * 字节序（LE/BE）无关紧要：输入本就是随机字节，两种解读都得到均匀随机的 uint32。
+ */
 function generateWechatUIN(): string {
   const buf = crypto.randomBytes(4)
   const n = buf.readUInt32LE()
@@ -180,13 +186,11 @@ class ILinkClient {
   private baseURL: string
   private botToken: string
   private botId: string
-  private wechatUIN: string
 
   constructor(creds: WeChatCredentials) {
     this.baseURL = creds.baseUrl || DEFAULT_BASE_URL
     this.botToken = creds.botToken
     this.botId = creds.ilinkBotId
-    this.wechatUIN = generateWechatUIN()
   }
 
   get botID(): string {
@@ -491,7 +495,7 @@ class ILinkClient {
           'Content-Type': 'application/json',
           'AuthorizationType': 'ilink_bot_token',
           'Authorization': `Bearer ${this.botToken}`,
-          'X-WECHAT-UIN': this.wechatUIN,
+          'X-WECHAT-UIN': generateWechatUIN(),
         },
         body: JSON.stringify(body),
         signal: controller.signal,

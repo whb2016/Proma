@@ -35,7 +35,7 @@ describe('resolveOutboundAttachmentPath', () => {
   test('工作区内的相对路径通过，并返回绝对路径与大小', () => {
     const root = makeRoot()
     try {
-      const r = resolveOutboundAttachmentPath(root, 'report.pdf', MAX)
+      const r = resolveOutboundAttachmentPath([root], 'report.pdf', MAX)
       expect(r.ok).toBe(true)
       if (r.ok) {
         expect(r.absolutePath).toBe(join(root, 'report.pdf'))
@@ -49,7 +49,7 @@ describe('resolveOutboundAttachmentPath', () => {
   test('子目录路径通过', () => {
     const root = makeRoot()
     try {
-      expect(resolveOutboundAttachmentPath(root, 'sub/chart.png', MAX).ok).toBe(true)
+      expect(resolveOutboundAttachmentPath([root], 'sub/chart.png', MAX).ok).toBe(true)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -58,9 +58,9 @@ describe('resolveOutboundAttachmentPath', () => {
   test('用 .. 逃出工作区被拒绝', () => {
     const root = makeRoot()
     try {
-      const r = resolveOutboundAttachmentPath(root, '../../etc/passwd', MAX)
+      const r = resolveOutboundAttachmentPath([root], '../../etc/passwd', MAX)
       expect(r.ok).toBe(false)
-      if (!r.ok) expect(r.reason).toContain('超出当前工作区')
+      if (!r.ok) expect(r.reason).toContain('超出当前会话的授权目录范围')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -71,9 +71,9 @@ describe('resolveOutboundAttachmentPath', () => {
     const outside = mkdtempSync(join(tmpdir(), 'proma-outside-'))
     writeFileSync(join(outside, 'secret.txt'), 'secret')
     try {
-      const r = resolveOutboundAttachmentPath(root, join(outside, 'secret.txt'), MAX)
+      const r = resolveOutboundAttachmentPath([root], join(outside, 'secret.txt'), MAX)
       expect(r.ok).toBe(false)
-      if (!r.ok) expect(r.reason).toContain('超出当前工作区')
+      if (!r.ok) expect(r.reason).toContain('超出当前会话的授权目录范围')
     } finally {
       rmSync(root, { recursive: true, force: true })
       rmSync(outside, { recursive: true, force: true })
@@ -83,12 +83,12 @@ describe('resolveOutboundAttachmentPath', () => {
   test('不存在 / 目录 / 空文件 / 超限 分别被拒绝', () => {
     const root = makeRoot()
     try {
-      expect(resolveOutboundAttachmentPath(root, 'nope.txt', MAX)).toMatchObject({ ok: false, reason: '文件不存在' })
-      expect(resolveOutboundAttachmentPath(root, 'sub', MAX)).toMatchObject({ ok: false, reason: '目标不是文件' })
-      expect(resolveOutboundAttachmentPath(root, 'empty.txt', MAX)).toMatchObject({ ok: false, reason: '文件为空' })
+      expect(resolveOutboundAttachmentPath([root], 'nope.txt', MAX)).toMatchObject({ ok: false, reason: '文件不存在' })
+      expect(resolveOutboundAttachmentPath([root], 'sub', MAX)).toMatchObject({ ok: false, reason: '目标不是文件' })
+      expect(resolveOutboundAttachmentPath([root], 'empty.txt', MAX)).toMatchObject({ ok: false, reason: '文件为空' })
 
       const tooSmallLimit = 10
-      const r = resolveOutboundAttachmentPath(root, 'report.pdf', tooSmallLimit)
+      const r = resolveOutboundAttachmentPath([root], 'report.pdf', tooSmallLimit)
       expect(r.ok).toBe(false)
       if (!r.ok) expect(r.reason).toContain('超过')
     } finally {
@@ -97,7 +97,48 @@ describe('resolveOutboundAttachmentPath', () => {
   })
 
   test('空路径被拒绝', () => {
-    expect(resolveOutboundAttachmentPath('/root', '   ', MAX)).toMatchObject({ ok: false, reason: '路径为空' })
+    expect(resolveOutboundAttachmentPath(['/root'], '   ', MAX)).toMatchObject({ ok: false, reason: '路径为空' })
+  })
+
+  test('没有授权目录时拒绝', () => {
+    expect(resolveOutboundAttachmentPath([], 'a.txt', MAX)).toMatchObject({ ok: false, reason: '没有可用的授权目录' })
+    expect(resolveOutboundAttachmentPath(['', '  '], 'a.txt', MAX)).toMatchObject({ ok: false, reason: '没有可用的授权目录' })
+  })
+
+  test('多个授权根：文件在会话工作台（非项目根）也能发，不必先复制', () => {
+    // 复现实际踩到的场景：Agent 的 cwd 是会话工作台，附件在那里；
+    // 若只放行项目根，模型就被迫先把文件复制进项目目录。
+    const sessionRoot = makeRoot()
+    const projectRoot = mkdtempSync(join(tmpdir(), 'proma-project-'))
+    try {
+      const roots = [sessionRoot, projectRoot]
+
+      // 绝对路径
+      const abs = resolveOutboundAttachmentPath(roots, join(sessionRoot, 'report.pdf'), MAX)
+      expect(abs.ok).toBe(true)
+
+      // 相对路径：按各根依次解析，命中会话工作台里的那个
+      const rel = resolveOutboundAttachmentPath(roots, 'report.pdf', MAX)
+      expect(rel.ok).toBe(true)
+      if (rel.ok) expect(rel.absolutePath).toBe(join(sessionRoot, 'report.pdf'))
+    } finally {
+      rmSync(sessionRoot, { recursive: true, force: true })
+      rmSync(projectRoot, { recursive: true, force: true })
+    }
+  })
+
+  test('多个授权根：仍然拒绝所有根之外的路径', () => {
+    const a = makeRoot()
+    const b = mkdtempSync(join(tmpdir(), 'proma-b-'))
+    const outside = mkdtempSync(join(tmpdir(), 'proma-outside-'))
+    writeFileSync(join(outside, 'secret.txt'), 'secret')
+    try {
+      const r = resolveOutboundAttachmentPath([a, b], join(outside, 'secret.txt'), MAX)
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.reason).toContain('超出当前会话的授权目录范围')
+    } finally {
+      for (const d of [a, b, outside]) rmSync(d, { recursive: true, force: true })
+    }
   })
 })
 

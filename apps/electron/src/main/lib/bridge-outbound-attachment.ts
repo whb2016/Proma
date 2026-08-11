@@ -32,23 +32,33 @@ export function isInsideRoot(root: string, target: string, caseInsensitive = pro
 /**
  * 解析并校验 Agent 要发送的附件路径
  *
- * @param root 允许的根目录（本会话工作区的项目文件根）
- * @param inputPath 模型给的路径，可为相对（相对 root）或绝对
+ * roots 应当就是 Agent 自身被授权访问的目录集合（`collectAttachedDirectories`
+ * 的结果：会话工作台、会话/工作区附加目录、项目文件根）。刻意与 Agent 边界保持
+ * 一致 —— 收窄会逼模型先把文件复制进工作区（上游的提示词明确要求"不要先复制"），
+ * 放宽则等于绕过 Proma 的授权设计。
+ *
+ * @param roots 允许的根目录列表，第一个视为主根（相对路径优先按它解析）
+ * @param inputPath 模型给的路径，可为相对或绝对
  * @param maxSize 大小上限（字节）
  */
 export function resolveOutboundAttachmentPath(
-  root: string,
+  roots: string[],
   inputPath: string,
   maxSize: number,
 ): ResolveOutboundPathResult {
   const raw = inputPath?.trim()
   if (!raw) return { ok: false, reason: '路径为空' }
+  const validRoots = roots.filter((r) => r && r.trim())
+  if (validRoots.length === 0) return { ok: false, reason: '没有可用的授权目录' }
 
-  // 绝对路径也要落在 root 内；相对路径按 root 解析
-  const absolutePath = isAbsolute(raw) ? normalize(raw) : resolve(root, raw)
+  // 绝对路径直接校验；相对路径依次按各根解析，取第一个真实存在的
+  const candidates = isAbsolute(raw)
+    ? [normalize(raw)]
+    : validRoots.map((root) => resolve(root, raw))
+  const absolutePath = candidates.find((p) => existsSync(p)) ?? candidates[0]!
 
-  if (!isInsideRoot(root, absolutePath)) {
-    return { ok: false, reason: '路径超出当前工作区，已拒绝' }
+  if (!validRoots.some((root) => isInsideRoot(root, absolutePath))) {
+    return { ok: false, reason: '路径超出当前会话的授权目录范围，已拒绝' }
   }
   if (!existsSync(absolutePath)) {
     return { ok: false, reason: '文件不存在' }

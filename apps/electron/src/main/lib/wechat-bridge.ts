@@ -32,7 +32,9 @@ import {
   generateAesKey,
   parseAesKey,
 } from './wechat-media-crypto'
-import { getAgentWorkspace, getProjectFilesPath } from './agent-workspace-manager'
+import { getAgentWorkspace } from './agent-workspace-manager'
+import { collectAttachedDirectories } from './agent-orchestrator'
+import { getAgentSessionMeta } from './agent-session-manager'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { basename } from 'node:path'
 import * as crypto from 'node:crypto'
@@ -575,16 +577,19 @@ class WeChatBridge {
     chatId: string
     contextData: unknown
     workspaceId: string
+    sessionId: string
   }): ToolDefinition {
     return {
       name: 'mcp__wechat__send_attachment',
       label: '发送附件到微信',
-      description: '把当前工作区内的一个图片或文件发送给正在对话的微信用户。'
+      description: '把一个图片或文件发送给正在对话的微信用户。'
+        + '可发送范围与你的文件读取范围一致：会话工作台、已授权的附加目录、项目文件根 —— '
+        + '直接传绝对路径即可，不需要先复制到当前工作目录。'
         + '图片（png/jpg/jpeg/gif/webp/bmp）以图片形式发送，其余按文件发送。'
         + '仅在用户要求获取文件、或你生成了需要交付的产物时使用；单个文件上限 20MB。',
-      promptSnippet: 'WeChat: use mcp__wechat__send_attachment to deliver a file or image from the workspace to the user.',
+      promptSnippet: 'WeChat: use mcp__wechat__send_attachment to deliver a file or image to the user; any path you may read is allowed, no copying needed.',
       parameters: Type.Object({
-        path: Type.String({ description: '要发送的文件路径，相对当前工作区根目录，也可以是工作区内的绝对路径。' }),
+        path: Type.String({ description: '要发送的文件路径。推荐绝对路径；相对路径按会话工作台等授权目录依次解析。' }),
         caption: Type.Optional(Type.String({ description: '可选的说明文字，会作为一条独立文本消息在附件前发送。' })),
       }),
       execute: async (_toolCallId, args): Promise<AgentToolResult<unknown>> => {
@@ -602,9 +607,16 @@ class WeChatBridge {
 
         const workspace = getAgentWorkspace(ctx.workspaceId)
         if (!workspace) return fail('工作区不存在')
-        const root = getProjectFilesPath(workspace.slug)
 
-        const resolved = resolveOutboundAttachmentPath(root, rawPath, MAX_UPLOAD_SIZE)
+        // 与 Agent 自身的授权目录一致：会话工作台、会话/工作区附加目录、项目文件根。
+        // 用 getProjectFilesPath 单根会漏掉 Agent 的 cwd（会话工作台，附件就在那里），
+        // 逼模型先复制一份 —— 而上游提示词明确要求"不要先复制到当前工作目录"。
+        const roots = collectAttachedDirectories({
+          sessionMeta: getAgentSessionMeta(ctx.sessionId),
+          workspaceSlug: workspace.slug,
+        })
+
+        const resolved = resolveOutboundAttachmentPath(roots, rawPath, MAX_UPLOAD_SIZE)
         if (!resolved.ok) return fail(resolved.reason)
 
         const contextToken = (ctx.contextData as { contextToken?: string } | undefined)?.contextToken ?? ''

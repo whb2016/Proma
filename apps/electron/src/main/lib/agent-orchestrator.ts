@@ -130,7 +130,7 @@ const DEFAULT_MODEL_ID = 'claude-sonnet-5'
  *   3. 工作区级 attachedDirectories + attachedFiles 的父目录
  *   4. 项目文件根目录（本地项目为用户目录，空白项目为 workspace-files/）
  */
-function collectAttachedDirectories(params: {
+export function collectAttachedDirectories(params: {
   sessionMeta?: AgentSessionMeta
   workspaceSlug?: string
   extraDirs?: string[]

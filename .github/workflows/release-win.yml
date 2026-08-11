@@ -66,3 +66,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --x64 --publish always
         working-directory: apps/electron
+
+      # electron-builder 创建的 Release body 是空的，而应用内「版本历史」读的正是
+      # 这个字段（ReleaseNotesViewer 渲染 release.body），空 body 会显示
+      # 「暂无发布说明」。这里把仓库内的 release-notes/v<version>.md 写进 Release。
+      # 找不到对应文件只告警、不让发版失败。
+      - name: 写入发布说明
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NOTES="../../release-notes/v${VERSION}.md"
+          if [ -f "$NOTES" ]; then
+            gh release edit "v${VERSION}" --repo "${{ github.repository }}" --notes-file "$NOTES"
+            echo "已写入发布说明: $NOTES"
+          else
+            echo "::warning::未找到 $NOTES，Release 说明将保持为空（应用内会显示「暂无发布说明」）"
+          fi
+        working-directory: apps/electron

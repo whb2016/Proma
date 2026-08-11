@@ -79,6 +79,8 @@ import {
   installPiRequestProxyFetch,
   runWithPiRequestProxy,
 } from './pi-request-proxy'
+import { buildAgentUserId } from '../agent-request-metadata'
+import { getConfigDir } from '../config-paths'
 
 type PiSdk = typeof import('@earendil-works/pi-coding-agent')
 type BashOperations = import('@earendil-works/pi-coding-agent').BashOperations
@@ -1394,10 +1396,20 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }
       // 代理作用域必须只覆盖模型 provider stream：在整个 session.prompt() 链上设
       // AsyncLocalStorage 会把 MCP/产品工具等同一 Agent loop 中的 fetch 也错误地送进 Codex 代理。
+      //
+      // 同时在这里注入 metadata.user_id：Pi 的 anthropic provider 会把它写进请求体的
+      // metadata（用于上游的滥用追踪与限流），其它 provider 不认这个字段会直接忽略，
+      // 因此不需要按渠道判断。调用方已给的 metadata 优先，不被覆盖。
       const providerStreamFn = session.agent.streamFunction
       session.agent.streamFunction = (requestModel, context, options) => runWithPiRequestProxy(
         requestProxyDispatcher,
-        () => providerStreamFn(requestModel, context, options),
+        () => providerStreamFn(requestModel, context, {
+          ...options,
+          metadata: {
+            user_id: buildAgentUserId(getConfigDir(), session.sessionId),
+            ...options?.metadata,
+          },
+        }),
       )
       installRuntimeGuardHooks(session, runtimeGuard)
       installCurrentSessionCompactionHooks(session)

@@ -1,0 +1,64 @@
+# GitHub Actions: Windows 发版（fork 定制）
+#
+# 触发条件：推送 pioneer-v* tag（如 pioneer-v0.17.201）
+#
+# 为什么单独一个文件而不是改上游的 release.yml：
+# - 上游会持续维护 release.yml，改动它会让每次合并上游都产生冲突；
+# - 上游的 release.yml 触发条件是 v*，本 fork 只推 pioneer-v* tag，
+#   两者互不干扰，因此上游那个文件可以保持原样、永不冲突；
+# - 上游的 mac job 需要 Apple 签名/公证 secrets，本 fork 没有配，跑了必然失败。
+#
+# GITHUB_TOKEN 由 GitHub Actions 自动提供。产物发布到 electron-builder.yml
+# 的 publish 配置所指仓库（已改为本 fork）。
+#
+# 注意：fork 的 Actions 默认关闭，首次使用需在仓库 Actions 页手动启用。
+
+name: Release (Windows)
+
+on:
+  push:
+    tags:
+      - 'pioneer-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-x64:
+    name: build (windows-latest, win, x64, --x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - name: 构建 Electron 应用
+        run: bun run electron:build
+        working-directory: .
+
+      # Bun workspace 把依赖 hoist 到仓库根 node_modules，而 electron-builder 的
+      # files 规则以 apps/electron 为 appDir。不同步的话 apps/electron/node_modules
+      # 是空的，打出来的包里会缺 Pi runtime 等 external 依赖。
+      # 上游 release.yml 的 win job 没有这一步，本 fork 显式补上。
+      - name: 同步运行时依赖
+        run: bun run sync:runtime-deps
+        working-directory: apps/electron
+
+      - name: 打包并发布 (Windows)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --x64 --publish always
+        working-directory: apps/electron

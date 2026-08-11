@@ -164,8 +164,13 @@ nsis:
 # 发布配置
 # 每个平台的 build job 通过 --publish always 直接上传到 GitHub Release。
 # electron-builder 会自动创建/复用 Release，并在多架构并行上传时合并 latest-mac.yml。
+#
+# fork 定制：owner 指向本 fork。这个配置会被写进包内的 app-update.yml，
+# 决定 electron-updater 去哪里检查更新（auto-updater.ts 里 autoDownload=true）。
+# 若指回上游，本 fork 打出的包会自动下载官方版并在用户确认后覆盖掉定制版；
+# 同时 CI 的 GITHUB_TOKEN 也没有上游仓库的写权限，publish 会 403。
 # ============================================
 publish:
   provider: github
-  owner: ErlichLiu
+  owner: whb2016
   repo: Proma

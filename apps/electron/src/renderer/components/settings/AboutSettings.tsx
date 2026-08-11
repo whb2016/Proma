@@ -27,7 +27,9 @@ import { VersionHistory } from './VersionHistory'
 declare const __APP_VERSION__: string
 const APP_VERSION = __APP_VERSION__
 
-const GITHUB_RELEASES_URL = 'https://github.com/ErlichLiu/Proma/releases'
+// fork 定制：更新卡片「去下载」的兜底地址，指向本 fork 的 Release（下方「项目地址」
+// 仍指向上游项目主页，保留出处）。
+const GITHUB_RELEASES_URL = 'https://github.com/whb2016/Proma/releases'
 
 /** 更新状态卡片 */
 function UpdateCard(): React.ReactElement | null {

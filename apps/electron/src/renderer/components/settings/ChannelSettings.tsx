@@ -141,9 +141,6 @@ export function ChannelSettings(): React.ReactElement {
           </Button>
         }
       >
-        <SettingsCard>
-          <PromaProviderCard />
-        </SettingsCard>
         {loading ? (
           <div className="text-sm text-muted-foreground py-8 text-center">加载中...</div>
         ) : channels.length === 0 ? (
@@ -187,10 +184,6 @@ export function ChannelSettings(): React.ReactElement {
       </AlertDialog>
     </div>
   )
-}
-
-function openPromaDownload(): void {
-  window.open('https://proma.cool/download', '_blank')
 }
 
 // ===== 渠道行子组件 =====
@@ -248,6 +241,12 @@ function ChannelRow({ channel, onEdit, onDelete, onToggle }: ChannelRowProps): R
 }
 
 // ===== Proma 官方供应商推广卡片 =====
+// 本 fork 内部自用，不展示商业版推广，因此列表里不再渲染 PromaProviderCard。
+// 组件保留是为了减小与上游的 diff（上游改动这块时不会冲突），需要时挂回列表即可。
+
+function openPromaDownload(): void {
+  window.open('https://proma.cool/download', '_blank')
+}
 
 function PromaProviderCard(): React.ReactElement {
   return (

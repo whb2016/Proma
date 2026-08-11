@@ -118,6 +118,8 @@ import { stopFeishuSyncSleepBlocker, syncFeishuSyncSleepBlocker } from './lib/fe
 import { getPersistableMainWindowState, hideMacMainWindowAfterClose } from './lib/main-window-lifecycle'
 import { dingtalkBridgeManager } from './lib/dingtalk-bridge-manager'
 import { getDingTalkMultiBotConfig } from './lib/dingtalk-config'
+import { qqBridgeManager } from './lib/qq-bridge-manager'
+import { getQQMultiBotConfig } from './lib/qq-config'
 import { wechatBridge } from './lib/wechat-bridge'
 import { getWeChatConfig } from './lib/wechat-config'
 import { createQuickTaskWindow, toggleQuickTaskWindow, destroyQuickTaskWindow } from './lib/quick-task-window'
@@ -221,6 +223,20 @@ registerBridge({
   needsRecovery: () => wechatBridge.getStatus().status === 'error',
   start: () => wechatBridge.start(),
   stop: () => wechatBridge.stop(),
+})
+
+registerBridge({
+  name: 'QQ BridgeManager',
+  shouldAutoStart: () => getQQMultiBotConfig().bots.some((b) => b.enabled && b.appId && b.appSecret),
+  needsRecovery: () => {
+    const states = qqBridgeManager.getStates()
+    return getQQMultiBotConfig().bots.some((bot) => (
+      bot.enabled && !!bot.appId && !!bot.appSecret && states.bots[bot.id]?.status === 'error'
+    ))
+  },
+  start: () => qqBridgeManager.startAll(),
+  stop: () => qqBridgeManager.stopAll(),
+  recover: () => qqBridgeManager.recoverEnabledBots(),
 })
 
 async function recoverEnabledFeishuBots(): Promise<void> {

@@ -69,6 +69,7 @@ import type { TabItem } from './atoms/tab-atoms'
 import { chatToolsAtom } from './atoms/chat-tool-atoms'
 import { feishuBotStatesAtom } from './atoms/feishu-atoms'
 import { dingtalkBotStatesAtom } from './atoms/dingtalk-atoms'
+import { qqBotStatesAtom } from './atoms/qq-atoms'
 import { currentConversationIdAtom, channelsAtom, channelsLoadedAtom, selectedModelAtom } from './atoms/chat-atoms'
 import { appModeAtom } from './atoms/app-mode'
 import type { FeishuBotBridgeState, FeishuBridgeState, DingTalkBotBridgeState, DingTalkBridgeState } from '@proma/shared'
@@ -754,6 +755,37 @@ function FeishuInitializer(): null {
 }
 
 /**
+ * QQInitializer
+ *
+ * - 加载多 Bot 初始状态
+ * - 订阅 QQ Bridge 状态变化
+ */
+function QQInitializer(): null {
+  const store = useStore()
+
+  useEffect(() => {
+    window.electronAPI.getQQMultiStatus?.()
+      .then((multiState) => {
+        store.set(qqBotStatesAtom, multiState.bots)
+      })
+      .catch((err: unknown) => console.error('[QQInitializer] 加载状态失败:', err))
+
+    const cleanupStatus = window.electronAPI.onQQStatusChanged((state) => {
+      store.set(qqBotStatesAtom, (prev) => ({
+        ...prev,
+        [state.botId]: state,
+      }))
+    })
+
+    return () => {
+      cleanupStatus()
+    }
+  }, [store])
+
+  return null
+}
+
+/**
  * DingTalkInitializer
  *
  * - 加载多 Bot 初始状态
@@ -1129,6 +1161,7 @@ if (isQuickTaskWindow) {
       <PlanningInitializer />
       <FeishuInitializer />
       <DingTalkInitializer />
+      <QQInitializer />
       <TabStatePersistenceInitializer />
       <ScratchPadPersistence />
       <VoiceDictationApp embedded />

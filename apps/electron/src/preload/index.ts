@@ -6,7 +6,7 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AGENT_ISLAND_IPC_CHANNELS } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, QQ_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AGENT_ISLAND_IPC_CHANNELS } from '@proma/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
   RuntimeStatus,
@@ -1043,6 +1043,27 @@ export interface ElectronAPI {
   stopDingTalkBot: (botId: string) => Promise<void>
   /** 获取多 Bot 状态 */
   getDingTalkMultiStatus: () => Promise<import('@proma/shared').DingTalkMultiBridgeState>
+
+  // ===== QQ 机器人 =====
+
+  /** 获取多 Bot 配置 */
+  getQQMultiConfig: () => Promise<import('@proma/shared').QQMultiBotConfig>
+  /** 保存单个 Bot 配置（新建或更新） */
+  saveQQBotConfig: (input: import('@proma/shared').QQBotConfigInput) => Promise<import('@proma/shared').QQBotConfig>
+  /** 删除 Bot */
+  removeQQBot: (botId: string) => Promise<boolean>
+  /** 获取单个 Bot 解密后的 AppSecret */
+  getDecryptedQQBotSecret: (botId: string) => Promise<string>
+  /** 测试连接（appSecret 传空表示沿用已保存的） */
+  testQQConnection: (payload: { appId: string; appSecret: string; sandbox: boolean; botId?: string }) => Promise<import('@proma/shared').QQTestResult>
+  /** 启动单个 Bot */
+  startQQBot: (botId: string) => Promise<void>
+  /** 停止单个 Bot */
+  stopQQBot: (botId: string) => Promise<void>
+  /** 获取多 Bot 状态 */
+  getQQMultiStatus: () => Promise<import('@proma/shared').QQMultiBridgeState>
+  /** 订阅单个 Bot 的状态变化 */
+  onQQStatusChanged: (callback: (state: import('@proma/shared').QQBotBridgeState) => void) => () => void
 
   // ===== 微信集成 =====
 
@@ -2501,6 +2522,49 @@ const electronAPI: ElectronAPI = {
 
   getDingTalkMultiStatus: () => {
     return ipcRenderer.invoke(DINGTALK_IPC_CHANNELS.GET_MULTI_STATUS)
+  },
+
+  // ===== QQ 机器人 =====
+
+  getQQMultiConfig: () => {
+    return ipcRenderer.invoke(QQ_IPC_CHANNELS.GET_MULTI_CONFIG)
+  },
+
+  saveQQBotConfig: (input: import('@proma/shared').QQBotConfigInput) => {
+    return ipcRenderer.invoke(QQ_IPC_CHANNELS.SAVE_BOT_CONFIG, input)
+  },
+
+  removeQQBot: (botId: string) => {
+    return ipcRenderer.invoke(QQ_IPC_CHANNELS.REMOVE_BOT, botId)
+  },
+
+  getDecryptedQQBotSecret: (botId: string) => {
+    return ipcRenderer.invoke(QQ_IPC_CHANNELS.GET_BOT_DECRYPTED_SECRET, botId)
+  },
+
+  testQQConnection: (payload: { appId: string; appSecret: string; sandbox: boolean; botId?: string }) => {
+    return ipcRenderer.invoke(QQ_IPC_CHANNELS.TEST_CONNECTION, payload)
+  },
+
+  startQQBot: (botId: string) => {
+    return ipcRenderer.invoke(QQ_IPC_CHANNELS.START_BOT, botId)
+  },
+
+  stopQQBot: (botId: string) => {
+    return ipcRenderer.invoke(QQ_IPC_CHANNELS.STOP_BOT, botId)
+  },
+
+  getQQMultiStatus: () => {
+    return ipcRenderer.invoke(QQ_IPC_CHANNELS.GET_MULTI_STATUS)
+  },
+
+  onQQStatusChanged: (callback: (state: import('@proma/shared').QQBotBridgeState) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      state: import('@proma/shared').QQBotBridgeState,
+    ): void => callback(state)
+    ipcRenderer.on(QQ_IPC_CHANNELS.MULTI_STATUS_CHANGED, listener)
+    return () => { ipcRenderer.removeListener(QQ_IPC_CHANNELS.MULTI_STATUS_CHANGED, listener) }
   },
 
   onMenuCloseTab: (callback: () => void) => {

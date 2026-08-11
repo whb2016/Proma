@@ -52,6 +52,9 @@ export * from './dingtalk'
 // 微信集成相关类型
 export * from './wechat'
 
+// QQ 机器人集成相关类型
+export * from './qq'
+
 // 定时任务（Automation）相关类型
 export * from './automation'
 // 本地任务与日程（Planning）相关类型

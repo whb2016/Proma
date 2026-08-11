@@ -12,9 +12,11 @@ import { cn } from '@/lib/utils'
 import { feishuBotStatesAtom } from '@/atoms/feishu-atoms'
 import { dingtalkBotStatesAtom } from '@/atoms/dingtalk-atoms'
 import { wechatBridgeStateAtom } from '@/atoms/wechat-atoms'
+import { qqBotStatesAtom } from '@/atoms/qq-atoms'
 import { FeishuSettings } from './FeishuSettings'
 import { DingTalkSettings } from './DingTalkSettings'
 import { WeChatSettings } from './WeChatSettings'
+import { QQSettings } from './QQSettings'
 import { BotDefaultSettings } from './BotDefaultSettings'
 import { PromaLogoSettings } from './PromaLogoSettings'
 import feishuLogo from '@/assets/bots/feishu.png'
@@ -24,7 +26,7 @@ import promaLogo from '@/assets/models/proma.png'
 
 // ===== 类型 =====
 
-type BotPlatformId = 'feishu' | 'dingtalk' | 'wechat' | 'defaults' | 'logos'
+type BotPlatformId = 'feishu' | 'dingtalk' | 'wechat' | 'qq' | 'defaults' | 'logos'
 
 interface BotPlatformDef {
   id: BotPlatformId
@@ -59,6 +61,14 @@ const PLATFORMS: readonly BotPlatformDef[] = [
     iconBgClass: 'bg-orange-500/15',
   },
   {
+    // 暂无 QQ logo 素材，先用字符占位；放入 assets/bots/qq.png 后改为 iconSrc 即可
+    id: 'qq',
+    name: 'QQ',
+    iconChar: 'Q',
+    iconBgClass: 'bg-sky-500/15',
+    iconTextClass: 'text-sky-600 dark:text-sky-400',
+  },
+  {
     id: 'defaults',
     name: '用法',
     iconChar: '⚙',
@@ -88,6 +98,7 @@ function PlatformStatusDot({ platformId }: { platformId: BotPlatformId }): React
   const feishuBotStates = useAtomValue(feishuBotStatesAtom)
   const dingtalkBotStates = useAtomValue(dingtalkBotStatesAtom)
   const wechatState = useAtomValue(wechatBridgeStateAtom)
+  const qqBotStates = useAtomValue(qqBotStatesAtom)
 
   if (platformId === 'defaults' || platformId === 'logos') return null
 
@@ -95,6 +106,7 @@ function PlatformStatusDot({ platformId }: { platformId: BotPlatformId }): React
     feishu: getPlatformStatus(feishuBotStates),
     dingtalk: getPlatformStatus(dingtalkBotStates),
     wechat: wechatState.status,
+    qq: getPlatformStatus(qqBotStates),
   }
   const status = statusMap[platformId] ?? 'disconnected'
   const colorClass = BRIDGE_STATUS_COLORS[status as keyof typeof BRIDGE_STATUS_COLORS] ?? 'bg-gray-400'
@@ -168,6 +180,8 @@ function renderPlatformPanel(id: BotPlatformId): React.ReactElement {
       return <DingTalkSettings />
     case 'wechat':
       return <WeChatSettings />
+    case 'qq':
+      return <QQSettings />
     case 'defaults':
       return <BotDefaultSettings />
     case 'logos':

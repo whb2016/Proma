@@ -9,7 +9,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { existsSync, realpathSync, rmSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, PLANNING_CONFLICT_ERROR, isPromaPermissionMode, normalizePathForCompare } from '@proma/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, QQ_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, PLANNING_CONFLICT_ERROR, isPromaPermissionMode, normalizePathForCompare } from '@proma/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
@@ -370,6 +370,8 @@ import { feishuBridgeManager } from './lib/feishu-bridge-manager'
 import { syncFeishuSyncSleepBlocker } from './lib/feishu-sleep-blocker'
 import { presenceService } from './lib/feishu-presence'
 import { getDingTalkConfig, saveDingTalkConfig, getDecryptedClientSecret, getDingTalkMultiBotConfig, saveDingTalkBotConfig, removeDingTalkBot, getDecryptedBotClientSecret } from './lib/dingtalk-config'
+import { getQQMultiBotConfig, saveQQBotConfig, removeQQBot, getDecryptedBotAppSecret as getDecryptedQQBotAppSecret } from './lib/qq-config'
+import { qqBridgeManager } from './lib/qq-bridge-manager'
 import { dingtalkBridgeManager } from './lib/dingtalk-bridge-manager'
 import { getWeChatConfig } from './lib/wechat-config'
 import { wechatBridge } from './lib/wechat-bridge'
@@ -2300,6 +2302,7 @@ export function registerIpcHandlers(): void {
       const removedDingTalkBindings = dingtalkBridgeManager.removeBindingsForDeletedWorkspace(id, affectedSessionIds)
       const removedWeChatBindings = wechatBridge.removeBindingsForDeletedWorkspace(id, affectedSessionIds)
       const removedFeishuBindings = feishuBridgeManager.removeBindingsForDeletedWorkspace(id, affectedSessionIds)
+      const removedQQBindings = qqBridgeManager.removeBindingsForDeletedWorkspace(id, affectedSessionIds)
 
       if (removedDingTalkBindings > 0) {
         console.log(`[项目删除] 已移除 ${removedDingTalkBindings} 条钉钉聊天绑定`)
@@ -2309,6 +2312,9 @@ export function registerIpcHandlers(): void {
       }
       if (removedFeishuBindings > 0) {
         console.log(`[项目删除] 已移除 ${removedFeishuBindings} 条飞书聊天绑定`)
+      }
+      if (removedQQBindings > 0) {
+        console.log(`[项目删除] 已移除 ${removedQQBindings} 条 QQ 聊天绑定`)
       }
 
       for (const sessionId of affectedSessionIds) {
@@ -4346,6 +4352,81 @@ export function registerIpcHandlers(): void {
     DINGTALK_IPC_CHANNELS.GET_MULTI_STATUS,
     async () => {
       return dingtalkBridgeManager.getStates()
+    }
+  )
+
+  // ===== QQ 机器人集成 =====
+
+  // 获取多 Bot 配置
+  ipcMain.handle(
+    QQ_IPC_CHANNELS.GET_MULTI_CONFIG,
+    async () => {
+      return getQQMultiBotConfig()
+    }
+  )
+
+  // 保存单个 Bot 配置；配置变更后按启用状态自动重启或停止（不阻塞返回）
+  ipcMain.handle(
+    QQ_IPC_CHANNELS.SAVE_BOT_CONFIG,
+    async (_, input: import('@proma/shared').QQBotConfigInput) => {
+      const saved = saveQQBotConfig(input)
+      if (saved.enabled && saved.appId && saved.appSecret) {
+        qqBridgeManager.restartBot(saved.id).catch((err) => {
+          console.error(`[QQ IPC] Bot "${saved.name}" 重启失败:`, err)
+        })
+      } else {
+        qqBridgeManager.stopBot(saved.id)
+      }
+      return saved
+    }
+  )
+
+  // 删除 Bot
+  ipcMain.handle(
+    QQ_IPC_CHANNELS.REMOVE_BOT,
+    async (_, botId: string) => {
+      qqBridgeManager.stopBot(botId)
+      return removeQQBot(botId)
+    }
+  )
+
+  // 获取单个 Bot 的解密 AppSecret
+  ipcMain.handle(
+    QQ_IPC_CHANNELS.GET_BOT_DECRYPTED_SECRET,
+    async (_, botId: string) => {
+      return getDecryptedQQBotAppSecret(botId)
+    }
+  )
+
+  // 测试连接
+  ipcMain.handle(
+    QQ_IPC_CHANNELS.TEST_CONNECTION,
+    async (_, payload: { appId: string; appSecret: string; sandbox: boolean; botId?: string }) => {
+      return qqBridgeManager.testConnection(payload.appId, payload.appSecret, payload.sandbox, payload.botId)
+    }
+  )
+
+  // 启动单个 Bot
+  ipcMain.handle(
+    QQ_IPC_CHANNELS.START_BOT,
+    async (_, botId: string) => {
+      await qqBridgeManager.startBot(botId)
+    }
+  )
+
+  // 停止单个 Bot
+  ipcMain.handle(
+    QQ_IPC_CHANNELS.STOP_BOT,
+    async (_, botId: string) => {
+      qqBridgeManager.stopBot(botId)
+    }
+  )
+
+  // 获取多 Bot 状态
+  ipcMain.handle(
+    QQ_IPC_CHANNELS.GET_MULTI_STATUS,
+    async () => {
+      return qqBridgeManager.getStates()
     }
   )
 

@@ -612,6 +612,24 @@ export function getDingTalkBotBindingsPath(botId: string): string {
 }
 
 /**
+ * 获取 QQ 机器人配置文件路径
+ *
+ * @returns ~/.proma/qq.json
+ */
+export function getQQConfigPath(): string {
+  return join(getConfigDir(), 'qq.json')
+}
+
+/**
+ * 获取某个 QQ Bot 的聊天绑定持久化路径
+ *
+ * @returns ~/.proma/qq-bindings-{botId}.json
+ */
+export function getQQBotBindingsPath(botId: string): string {
+  return join(getConfigDir(), `qq-bindings-${botId}.json`)
+}
+
+/**
  * 获取飞书配置文件路径
  *
  * @returns ~/.proma/feishu.json

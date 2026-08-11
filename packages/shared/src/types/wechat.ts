@@ -64,6 +64,19 @@ export const WECHAT_ITEM_TYPE = {
   VIDEO: 5,
 } as const
 
+/**
+ * iLink 媒体上传类型（getuploadurl 的 media_type）
+ *
+ * 注意：这套取值与上面的 WECHAT_ITEM_TYPE **不同**，不能互相复用 ——
+ * 上传时图片是 1、文件是 3，而消息 item 里图片是 2、文件是 4。
+ */
+export const WECHAT_MEDIA_TYPE = {
+  IMAGE: 1,
+  VIDEO: 2,
+  FILE: 3,
+  VOICE: 4,
+} as const
+
 /** iLink 消息类型 */
 export const WECHAT_MESSAGE_TYPE = {
   USER: 1,
@@ -83,7 +96,7 @@ export interface WeChatMessageItem {
   text_item?: { text: string }
   image_item?: { url?: string; aeskey?: string; media?: WeChatMediaInfo }
   voice_item?: { media?: WeChatMediaInfo; text?: string; playtime?: number }
-  file_item?: { media?: WeChatMediaInfo; file_name?: string; len?: string }
+  file_item?: { media?: WeChatMediaInfo; file_name?: string; len?: string; md5?: string }
   video_item?: { media?: WeChatMediaInfo; video_size?: number }
 }
 

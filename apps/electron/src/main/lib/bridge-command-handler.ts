@@ -18,6 +18,7 @@ import {
   getWorkspaceCapabilities,
 } from './agent-workspace-manager'
 import { runAgentHeadless, agentEventBus, stopAgent, isAgentSessionActive } from './agent-service'
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { getSettings } from './settings-service'
 import { buildAttachedFilesBlock, buildSessionFileTree, buildFileTree } from './bridge-attachment-utils'
 import {
@@ -62,6 +63,18 @@ export interface BridgeCommandHandlerConfig {
   onWorkspaceSwitched?: (workspaceId: string) => void
   /** 可选持久化存储：用于跨应用重启恢复 chatId → sessionId 绑定 */
   bindingStore?: BridgeChatBindingStore
+  /**
+   * 可选：为本次 Agent 运行注入平台专属工具（如微信的"发送附件给用户"）。
+   *
+   * 每次运行现算，工具闭包因此能绑定当前会话上下文（chatId、平台 contextData、
+   * 工作区），模型无法通过参数把内容发到别的会话、或读取工作区外的文件。
+   */
+  buildPiCustomTools?: (ctx: {
+    chatId: string
+    contextData: unknown
+    workspaceId: string
+    sessionId: string
+  }) => ToolDefinition[]
 }
 
 /** 通用聊天绑定 */
@@ -788,6 +801,14 @@ export class BridgeCommandHandler {
       permissionModeOverride: 'bypassPermissions' as const,
     }
 
+    // 平台专属工具按 chat 现算，闭包内绑定当前 chatId 与平台上下文
+    const piCustomTools = this.config.buildPiCustomTools?.({
+      chatId,
+      contextData,
+      workspaceId: binding.workspaceId,
+      sessionId: binding.sessionId,
+    })
+
     runAgentHeadless(input, {
       onError: (error) => {
         this.log(`Agent 错误: ${error}`)
@@ -798,7 +819,7 @@ export class BridgeCommandHandler {
         // complete 由 EventBus listener 处理
       },
       onTitleUpdated: () => {},
-    }).catch((error) => {
+    }, piCustomTools?.length ? { piCustomTools } : undefined).catch((error) => {
       this.log(`Agent 运行异常: ${error}`)
     })
   }

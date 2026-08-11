@@ -14,18 +14,32 @@ import type {
   WeChatBridgeState,
   WeChatCredentials,
   WeChatIncomingMessage,
+  WeChatMediaInfo,
   WeChatMessageItem,
 } from '@proma/shared'
-import { WECHAT_IPC_CHANNELS, WECHAT_ITEM_TYPE, WECHAT_MESSAGE_TYPE, WECHAT_MESSAGE_STATE } from '@proma/shared'
+import { WECHAT_IPC_CHANNELS, WECHAT_ITEM_TYPE, WECHAT_MEDIA_TYPE, WECHAT_MESSAGE_TYPE, WECHAT_MESSAGE_STATE } from '@proma/shared'
 import { getDecryptedCredentials, saveWeChatCredentials, clearWeChatCredentials, getWeChatConfig, updateWeChatDefaultWorkspace } from './wechat-config'
 import { getWeChatBindingsPath, getWeChatSyncPath } from './config-paths'
 import { BridgeCommandHandler, type BridgeAttachment } from './bridge-command-handler'
 import { createJsonBridgeChatBindingStore } from './bridge-binding-store'
 import { inferImageMediaType, saveImageToSession, saveFileToSession, inferExtension, MAX_IMAGE_SIZE } from './bridge-attachment-utils'
-import { getAgentWorkspace } from './agent-workspace-manager'
+import { isImageAttachment, resolveOutboundAttachmentPath } from './bridge-outbound-attachment'
+import {
+  decryptAesEcbWithKey,
+  encodeAesKeyBase64,
+  encodeAesKeyHex,
+  encryptAesEcb,
+  generateAesKey,
+  parseAesKey,
+} from './wechat-media-crypto'
+import { getAgentWorkspace, getProjectFilesPath } from './agent-workspace-manager'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { basename } from 'node:path'
 import * as crypto from 'node:crypto'
 import QRCode from 'qrcode'
+import { Type } from 'typebox'
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
+import type { AgentToolResult } from '@earendil-works/pi-agent-core'
 
 import { redactSensitiveLogText, redactSensitiveLogValue } from './bridge-log-redaction'
 
@@ -49,6 +63,12 @@ const SESSION_EXPIRED_CODE = -14
 const DOWNLOAD_MEDIA_TIMEOUT_MS = 30_000
 const MAX_MEDIA_DOWNLOAD_SIZE = 20 * 1024 * 1024
 const MAX_FILE_SIZE = 20 * 1024 * 1024
+/** 出站媒体上限。与入站保持一致，避免"能收不能发"的不对称。 */
+const MAX_UPLOAD_SIZE = 20 * 1024 * 1024
+const UPLOAD_MEDIA_TIMEOUT_MS = 60_000
+const UPLOAD_MAX_RETRIES = 3
+/** CDN 基址。下载与上传共用。 */
+const CDN_BASE_URL = 'https://novac2c.cdn.weixin.qq.com/c2c'
 const HANDLE_MESSAGE_TIMEOUT_MS = 90_000
 const PENDING_IMAGES_CLEANUP_INTERVAL = 7 * 60 * 1000
 
@@ -121,6 +141,22 @@ interface GetConfigResponse {
   typing_ticket?: string
 }
 
+interface GetUploadUrlResponse {
+  ret: number
+  errmsg?: string
+  /** 完整上传地址；存在时优先使用 */
+  upload_full_url?: string
+  /** 上传参数；无 upload_full_url 时用它拼 CDN 地址 */
+  upload_param?: string
+}
+
+/** 上传完成后可直接塞进消息 item 的媒体引用 */
+interface UploadedMedia {
+  media: WeChatMediaInfo
+  /** 密文字节数（file_item.len 用原文大小，这里仅日志与校验用） */
+  encryptedSize: number
+}
+
 // ===== 工具函数 =====
 
 function generateWechatUIN(): string {
@@ -133,37 +169,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/**
- * 解析 iLink aes_key 为 16 字节原始 AES key
- *
- * 参考官方 SDK @tencent-weixin/openclaw-weixin：
- * - 图片场景：base64(raw 16 bytes)
- * - 文件/语音/视频：base64(32-char hex string)
- * - 备选：直接 32-char hex string（无 base64 外层）
- *
- * 依次尝试：base64→16B / base64→hex→16B / hex→16B
- */
-function parseAesKey(aesKeyBase64: string): Buffer {
-  const decoded = Buffer.from(aesKeyBase64, 'base64')
-  if (decoded.length === 16) return decoded
-  if (decoded.length === 32 && /^[0-9a-fA-F]{32}$/.test(decoded.toString('ascii'))) {
-    return Buffer.from(decoded.toString('ascii'), 'hex')
-  }
-  // 备选：输入本身就是 32-char hex（未经 base64 编码）
-  if (aesKeyBase64.length === 32 && /^[0-9a-fA-F]{32}$/.test(aesKeyBase64)) {
-    return Buffer.from(aesKeyBase64, 'hex')
-  }
-  throw new Error(`aes_key 解析失败：期望 16 字节或 32 字符 hex，实际 base64 解码后 ${decoded.length} 字节`)
-}
-
-function decryptAesEcbWithKey(ciphertext: Buffer, key: Buffer): Buffer {
-  if (ciphertext.length === 0 || ciphertext.length % 16 !== 0) {
-    throw new Error(`AES-ECB 密文长度非法: ${ciphertext.length}`)
-  }
-  const decipher = crypto.createDecipheriv('aes-128-ecb', key, null)
-  decipher.setAutoPadding(true)
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()])
-}
+/** CDN 上传的客户端错误（4xx）：确定性失败，不重试 */
+class UploadClientError extends Error {}
 
 // ===== iLink HTTP 客户端 =====
 
@@ -218,6 +225,134 @@ class ILinkClient {
     return this.sendMessage(toUserId, [{
       type: WECHAT_ITEM_TYPE.TEXT,
       text_item: { text },
+    }], contextToken)
+  }
+
+  /** 取 CDN 上传参数 */
+  private async getUploadUrl(params: {
+    filekey: string
+    media_type: number
+    to_user_id: string
+    rawsize: number
+    rawfilemd5: string
+    filesize: number
+    no_need_thumb: boolean
+    aeskey: string
+  }): Promise<GetUploadUrlResponse> {
+    return this.post<GetUploadUrlResponse>('/ilink/bot/getuploadurl', {
+      ...params,
+      base_info: this.baseInfo(),
+    }, SEND_TIMEOUT_MS)
+  }
+
+  /**
+   * 上传媒体到微信 CDN
+   *
+   * 三步：本地 AES-128-ECB 加密 → getuploadurl 换上传地址 → POST 密文到 CDN，
+   * 从响应头 x-encrypted-param 取回 encrypt_query_param。
+   *
+   * 服务端错误（5xx / 网络）重试，客户端错误（4xx）立即失败 —— 4xx 通常是参数
+   * 或鉴权问题，重试只会浪费时间。
+   */
+  async uploadMedia(options: { data: Buffer; toUserId: string; mediaType: number }): Promise<UploadedMedia> {
+    const { data, toUserId, mediaType } = options
+    if (data.length === 0) throw new Error('上传内容为空')
+    if (data.length > MAX_UPLOAD_SIZE) {
+      throw new Error(`上传内容 ${data.length} 字节超过 ${MAX_UPLOAD_SIZE} 限制`)
+    }
+
+    const aesKey = generateAesKey()
+    const ciphertext = encryptAesEcb(data, aesKey)
+    const filekey = crypto.randomBytes(16).toString('hex')
+    const rawMd5 = crypto.createHash('md5').update(data).digest('hex')
+
+    const params = await this.getUploadUrl({
+      filekey,
+      media_type: mediaType,
+      to_user_id: toUserId,
+      rawsize: data.length,
+      rawfilemd5: rawMd5,
+      filesize: ciphertext.length,
+      no_need_thumb: true,
+      aeskey: encodeAesKeyHex(aesKey),
+    })
+
+    const uploadFullUrl = params.upload_full_url?.trim()
+    if (!uploadFullUrl && !params.upload_param) {
+      throw new Error('getuploadurl 未返回上传地址（需要 upload_full_url 或 upload_param）')
+    }
+    const uploadUrl = uploadFullUrl
+      || `${CDN_BASE_URL}/upload?encrypted_query_param=${encodeURIComponent(params.upload_param!)}&filekey=${encodeURIComponent(filekey)}`
+    if (!isAllowedCdnUrl(uploadUrl)) throw new Error(`上传 URL 域名不在白名单: ${uploadUrl}`)
+
+    let encryptQueryParam: string | undefined
+    let lastError: unknown
+    for (let attempt = 1; attempt <= UPLOAD_MAX_RETRIES; attempt++) {
+      const ac = new AbortController()
+      const timer = setTimeout(() => ac.abort(), UPLOAD_MEDIA_TIMEOUT_MS)
+      try {
+        const resp = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: new Uint8Array(ciphertext),
+          signal: ac.signal,
+        })
+        const errMsg = resp.headers.get('x-error-message') ?? `HTTP ${resp.status}`
+        // 4xx 是确定性失败，直接抛出不重试
+        if (resp.status >= 400 && resp.status < 500) {
+          throw new UploadClientError(`CDN 上传客户端错误 ${resp.status}: ${errMsg}`)
+        }
+        if (!resp.ok) throw new Error(`CDN 上传服务端错误: ${errMsg}`)
+
+        encryptQueryParam = resp.headers.get('x-encrypted-param') ?? undefined
+        if (!encryptQueryParam) throw new Error('CDN 上传响应缺少 x-encrypted-param 头')
+        break
+      } catch (err) {
+        if (err instanceof UploadClientError) throw err
+        lastError = err
+        if (attempt < UPLOAD_MAX_RETRIES) {
+          console.warn(`[微信 Bridge] CDN 上传第 ${attempt} 次失败，重试:`, redactSensitiveLogValue(err))
+        }
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+
+    if (!encryptQueryParam) {
+      throw lastError instanceof Error ? lastError : new Error(`CDN 上传 ${UPLOAD_MAX_RETRIES} 次均失败`)
+    }
+
+    return {
+      media: {
+        encrypt_query_param: encryptQueryParam,
+        aes_key: encodeAesKeyBase64(aesKey),
+        encrypt_type: 1,
+      },
+      encryptedSize: ciphertext.length,
+    }
+  }
+
+  /** 上传并发送图片 */
+  async sendImage(toUserId: string, data: Buffer, contextToken: string): Promise<SendMessageResponse> {
+    const { media } = await this.uploadMedia({ data, toUserId, mediaType: WECHAT_MEDIA_TYPE.IMAGE })
+    return this.sendMessage(toUserId, [{
+      type: WECHAT_ITEM_TYPE.IMAGE,
+      image_item: { media },
+    }], contextToken)
+  }
+
+  /** 上传并发送文件 */
+  async sendFile(toUserId: string, data: Buffer, fileName: string, contextToken: string): Promise<SendMessageResponse> {
+    const { media } = await this.uploadMedia({ data, toUserId, mediaType: WECHAT_MEDIA_TYPE.FILE })
+    return this.sendMessage(toUserId, [{
+      type: WECHAT_ITEM_TYPE.FILE,
+      file_item: {
+        media,
+        file_name: fileName,
+        md5: crypto.createHash('md5').update(data).digest('hex'),
+        // len 是原文大小，不是密文大小
+        len: String(data.length),
+      },
     }], contextToken)
   }
 
@@ -279,7 +414,7 @@ class ILinkClient {
 
     if (!encryptQueryParam && !fullUrl) throw new Error('缺少 encrypt_query_param 和 full_url')
 
-    const cdnBaseUrl = 'https://novac2c.cdn.weixin.qq.com/c2c'
+    const cdnBaseUrl = CDN_BASE_URL
     const url = fullUrl ?? `${cdnBaseUrl}/download?encrypted_query_param=${encodeURIComponent(encryptQueryParam!)}`
     if (!isAllowedCdnUrl(url)) throw new Error(`图片 CDN URL 域名不在白名单: ${url}`)
 
@@ -314,7 +449,7 @@ class ILinkClient {
 
     if (!encryptQueryParam && !fullUrl) throw new Error('缺少 encrypt_query_param 和 full_url')
 
-    const cdnBaseUrl = 'https://novac2c.cdn.weixin.qq.com/c2c'
+    const cdnBaseUrl = CDN_BASE_URL
     const url = fullUrl ?? `${cdnBaseUrl}/download?encrypted_query_param=${encodeURIComponent(encryptQueryParam!)}`
     if (!isAllowedCdnUrl(url)) throw new Error(`文件 CDN URL 域名不在白名单: ${url}`)
 
@@ -424,7 +559,84 @@ class WeChatBridge {
     getDefaultWorkspaceId: () => getWeChatConfig().defaultWorkspaceId,
     bindingStore: createJsonBridgeChatBindingStore(getWeChatBindingsPath(), '微信 Bridge'),
     onWorkspaceSwitched: (workspaceId) => updateWeChatDefaultWorkspace(workspaceId),
+    buildPiCustomTools: (ctx) => [this.buildPiSendAttachmentTool(ctx)],
   })
+
+  /**
+   * 「发送附件给微信用户」工具
+   *
+   * 出站媒体必须由模型显式调用才发送：解析回复文本里的路径会误发（模型提到某个
+   * 文件不等于想发它），把本轮新建的文件全发出去则会带上临时产物。
+   *
+   * 安全边界：chatId 与 contextToken 由闭包绑定，模型无法指定发给谁；路径必须落在
+   * 本会话工作区内（见 resolveOutboundAttachmentPath），避免把本机任意文件发出去。
+   */
+  private buildPiSendAttachmentTool(ctx: {
+    chatId: string
+    contextData: unknown
+    workspaceId: string
+  }): ToolDefinition {
+    return {
+      name: 'mcp__wechat__send_attachment',
+      label: '发送附件到微信',
+      description: '把当前工作区内的一个图片或文件发送给正在对话的微信用户。'
+        + '图片（png/jpg/jpeg/gif/webp/bmp）以图片形式发送，其余按文件发送。'
+        + '仅在用户要求获取文件、或你生成了需要交付的产物时使用；单个文件上限 20MB。',
+      promptSnippet: 'WeChat: use mcp__wechat__send_attachment to deliver a file or image from the workspace to the user.',
+      parameters: Type.Object({
+        path: Type.String({ description: '要发送的文件路径，相对当前工作区根目录，也可以是工作区内的绝对路径。' }),
+        caption: Type.Optional(Type.String({ description: '可选的说明文字，会作为一条独立文本消息在附件前发送。' })),
+      }),
+      execute: async (_toolCallId, args): Promise<AgentToolResult<unknown>> => {
+        const input = args && typeof args === 'object' ? args as Record<string, unknown> : {}
+        const rawPath = typeof input.path === 'string' ? input.path : ''
+        const caption = typeof input.caption === 'string' ? input.caption.trim() : ''
+
+        const fail = (reason: string): AgentToolResult<unknown> => ({
+          content: [{ type: 'text', text: `发送失败：${reason}` }],
+          isError: true,
+          details: { reason },
+        } as AgentToolResult<unknown>)
+
+        if (!this.client) return fail('微信未连接')
+
+        const workspace = getAgentWorkspace(ctx.workspaceId)
+        if (!workspace) return fail('工作区不存在')
+        const root = getProjectFilesPath(workspace.slug)
+
+        const resolved = resolveOutboundAttachmentPath(root, rawPath, MAX_UPLOAD_SIZE)
+        if (!resolved.ok) return fail(resolved.reason)
+
+        const contextToken = (ctx.contextData as { contextToken?: string } | undefined)?.contextToken ?? ''
+        const fileName = basename(resolved.absolutePath)
+        const asImage = isImageAttachment(fileName)
+
+        try {
+          const data = readFileSync(resolved.absolutePath)
+          if (caption) {
+            await this.client.sendText(ctx.chatId, caption, contextToken)
+          }
+          if (asImage) {
+            await this.client.sendImage(ctx.chatId, data, contextToken)
+          } else {
+            await this.client.sendFile(ctx.chatId, data, fileName, contextToken)
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          console.error('[微信 Bridge] 发送附件失败:', redactSensitiveLogValue(error))
+          return fail(message)
+        }
+
+        return {
+          content: [{
+            type: 'text',
+            text: `已${asImage ? '以图片形式' : '以文件形式'}发送「${fileName}」（${resolved.size} 字节）。`,
+          }],
+          details: { fileName, size: resolved.size, kind: asImage ? 'image' : 'file' },
+        } as AgentToolResult<unknown>
+      },
+    } as ToolDefinition
+  }
 
   /** 获取当前状态 */
   getStatus(): WeChatBridgeState {

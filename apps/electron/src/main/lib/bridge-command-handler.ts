@@ -75,6 +75,12 @@ export interface BridgeCommandHandlerConfig {
     workspaceId: string
     sessionId: string
   }) => ToolDefinition[]
+  /**
+   * 收到消息后是否先回一条「⏳ Agent 处理中...」确认（默认 true）。
+   *
+   * QQ 这类被动回复条数有硬配额的平台应设为 false —— 那条确认会占掉一次回复机会。
+   */
+  sendProcessingNotice?: boolean
 }
 
 /** 通用聊天绑定 */
@@ -758,11 +764,16 @@ export class BridgeCommandHandler {
     }
 
     // 即时确认：[workspace_name]->[session_title]: ⏳ Agent 处理中...
-    const workspace = binding.workspaceId ? getAgentWorkspace(binding.workspaceId) : undefined
-    const session = getAgentSessionMeta(binding.sessionId)
-    const wsName = workspace?.name ?? '默认'
-    const chatName = session?.title ?? '新会话'
-    await this.send(chatId, `${wsName} → ${chatName}: ⏳ Agent 处理中...`, contextData)
+    //
+    // QQ 等对被动回复条数有硬配额的平台可以关掉这条：它会白白占掉一次回复机会，
+    // 而平台又没有"正在输入"这类状态可用来替代。
+    if (this.config.sendProcessingNotice !== false) {
+      const workspace = binding.workspaceId ? getAgentWorkspace(binding.workspaceId) : undefined
+      const session = getAgentSessionMeta(binding.sessionId)
+      const wsName = workspace?.name ?? '默认'
+      const chatName = session?.title ?? '新会话'
+      await this.send(chatId, `${wsName} → ${chatName}: ⏳ Agent 处理中...`, contextData)
+    }
 
     // 发送确认消息期间项目可能刚被删除。再次 ensure 后才允许进入无头 Agent，
     // 确保不会把失效 session/workspace 传给 runAgentHeadless。

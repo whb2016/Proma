@@ -36,8 +36,9 @@ export function decodeQQChatId(chatId: string): QQTarget | undefined {
 /**
  * 单轮回复允许的最大分段数
  *
- * 比平台上限各留一段余量，给错误提示或附件消息用：
- * 群聊上限 5 → 用 4；单聊上限 4 → 用 3。
+ * 平台上限：群聊 5 分钟内同一 msg_id 最多 5 条、单聊 60 分钟内 4 条。
+ * 由于不再发「⏳ Agent 处理中...」确认（见 qq-bridge 的 sendProcessingNotice），
+ * 这些配额可以全部留给正文；仍各留一段余量，用于附件或错误提示。
  */
 export function maxRepliesFor(kind: QQTargetKind): number {
   return kind === 'group' ? 4 : 3

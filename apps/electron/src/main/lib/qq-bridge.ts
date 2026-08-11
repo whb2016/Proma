@@ -80,6 +80,9 @@ export class QQBridge {
       ),
       onWorkspaceSwitched: (workspaceId) => updateQQBotDefaultWorkspace(this.botConfig.id, workspaceId),
       buildPiCustomTools: (ctx) => [this.buildPiSendAttachmentTool(ctx)],
+      // QQ 的被动回复条数是硬配额，「⏳ Agent 处理中...」会白占一次；
+      // 而 QQ 又没有「正在输入」状态可以替代，所以直接不发确认。
+      sendProcessingNotice: false,
     })
   }
 

@@ -12,6 +12,7 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { AgentToolResult } from '@earendil-works/pi-agent-core'
 import type {
   CreateAutomationInput,
+  AutomationNotificationTarget,
   PromaPermissionMode,
   UpdateAutomationInput,
 } from '@proma/shared'
@@ -26,6 +27,7 @@ import {
   broadcastChanged as broadcastAutomationsChanged,
   runAutomationNow,
 } from '../automation-scheduler'
+import { resolveSessionPushTarget } from '../automation-push-targets'
 import { getAgentSessionMeta } from '../agent-session-manager'
 import { isBuiltinMcpUserEnabled } from '../builtin-mcp/settings'
 import { downloadInstaller, launchInstaller } from '../installer-downloader'
@@ -228,6 +230,7 @@ function summarizeAutomation(a: import('@proma/shared').Automation, includeHisto
     runCount: a.runCount ?? 0,
     completedAt: a.completedAt,
     sessionMode: a.sessionMode,
+    notificationTargets: a.notificationTargets,
     workspaceId: a.workspaceId,
     sourceSessionId: a.sourceSessionId,
     lastSessionId: a.lastSessionId,
@@ -255,6 +258,41 @@ function assertNonBlank(value: string | undefined, field: string): string {
 }
 
 type AutomationScheduleType = 'interval' | 'daily' | 'weekly' | 'monthly' | 'once'
+
+/** create/update_automation 的 notify 取值 */
+type AutomationNotifyMode = 'source' | 'none'
+
+function validNotifyMode(v: unknown): v is AutomationNotifyMode {
+  return v === 'source' || v === 'none'
+}
+
+const NOTIFY_PARAM_DESCRIPTION = '完成通知推送到哪里。'
+  + 'source（默认）= 推回当前会话所在的远程聊天（飞书/微信/QQ），桌面端会话则不推远程；'
+  + 'none = 不推远程。无论哪种取值，任务结束都会发本机系统通知。'
+
+/**
+ * 解析 notify 参数为 notificationTargets
+ *
+ * @returns undefined 表示「不改动」（只有 update 省略 notify 时会出现），[] 表示不推远程
+ */
+function resolveNotifyTargets(
+  ctx: PiBuiltinToolsContext,
+  notify: unknown,
+  mode: 'create' | 'update',
+): AutomationNotificationTarget[] | undefined {
+  if (notify !== undefined && !validNotifyMode(notify)) {
+    throw new Error(`非法的 notify: ${String(notify)}（应为 source 或 none）`)
+  }
+  if (notify === 'none') return []
+  if (notify === undefined && mode === 'update') return undefined
+
+  const target = resolveSessionPushTarget(ctx.sessionId)
+  if (target) return [target]
+  // 桌面端会话查不到来源渠道是正常情况：新建时就当不推远程
+  if (mode === 'create') return []
+  // 但明确要求「推回来源」却查不到来源时要说清楚，不能静默清掉已有配置
+  throw new Error('当前会话不是远程聊天会话（飞书/微信/QQ），无法按来源渠道推送；要关掉远程推送请用 notify: "none"')
+}
 
 function validScheduleType(v: unknown): v is AutomationScheduleType {
   return v === 'interval' || v === 'daily' || v === 'weekly' || v === 'monthly' || v === 'once'
@@ -343,6 +381,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
         maxRuns: Type.Optional(Type.Number({ description: '最大运行次数上限；达到后任务自动停用' })),
         active: Type.Optional(Type.Boolean({ description: '创建后是否启用，默认 true' })),
         sessionMode: Type.Optional(Type.Union([Type.Literal('daily'), Type.Literal('reuse')], { description: '会话模式' })),
+        notify: Type.Optional(Type.Union([Type.Literal('source'), Type.Literal('none')], { description: NOTIFY_PARAM_DESCRIPTION })),
       }),
       async execute(_toolCallId: string, params: unknown) {
         const args = params as Record<string, unknown>
@@ -363,6 +402,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
           modelId: ctx.modelId,
           workspaceId: ctx.workspaceId,
           sessionMode: args.sessionMode as 'daily' | 'reuse' | undefined,
+          notificationTargets: resolveNotifyTargets(ctx, args.notify, 'create'),
           sourceSessionId: ctx.sessionId,
           active: (args.active as boolean) ?? true,
         }
@@ -410,6 +450,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
         maxRuns: Type.Optional(Type.Number({ description: '新的最大运行次数上限' })),
         active: Type.Optional(Type.Boolean({ description: '启用或暂停任务' })),
         sessionMode: Type.Optional(Type.Union([Type.Literal('daily'), Type.Literal('reuse')])),
+        notify: Type.Optional(Type.Union([Type.Literal('source'), Type.Literal('none')], { description: `${NOTIFY_PARAM_DESCRIPTION} 不传表示不改动现有设置。` })),
       }),
       async execute(_toolCallId: string, params: unknown) {
         const args = params as Record<string, unknown>
@@ -428,6 +469,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
           maxRuns: args.maxRuns as number | undefined,
           active: args.active as boolean | undefined,
           sessionMode: args.sessionMode as 'daily' | 'reuse' | undefined,
+          notificationTargets: resolveNotifyTargets(ctx, args.notify, 'update'),
         }
         if (input.name !== undefined) assertNonBlank(input.name, 'name')
         if (input.prompt !== undefined) assertNonBlank(input.prompt, 'prompt')

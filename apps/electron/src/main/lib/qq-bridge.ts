@@ -8,7 +8,7 @@
  * 1. 回复要带 msg_id + 递增的 msg_seq，且分段数受平台配额限制（见 qq-target.ts）
  * 2. 出站富媒体是"先上传拿 file_info 再发 msg_type:7"，没有加解密环节
  */
-import type { BridgeAttachment } from './bridge-command-handler'
+import type { BridgeAttachment, BridgeChatBinding } from './bridge-command-handler'
 import { BridgeCommandHandler } from './bridge-command-handler'
 import type {
   QQBotBridgeState,
@@ -27,6 +27,7 @@ import {
   chunkReply,
   decodeQQChatId,
   encodeQQChatId,
+  truncateForSingleMessage,
   type QQTarget,
 } from './qq-target'
 import { getDecryptedBotAppSecret, updateQQBotDefaultWorkspace } from './qq-config'
@@ -100,6 +101,32 @@ export class QQBridge {
 
   removeBindingsForDeletedWorkspace(workspaceId: string, sessionIds: Iterable<string>): number {
     return this.commandHandler.removeBindingsForDeletedWorkspace(workspaceId, sessionIds)
+  }
+
+  /** 当前有效的聊天绑定（定时任务推送目标列表用） */
+  listBindings(): BridgeChatBinding[] {
+    return this.commandHandler.listBindings()
+  }
+
+  /** 反查会话绑定在哪个聊天上 */
+  getChatIdBySessionId(sessionId: string): string | undefined {
+    return this.commandHandler.getChatIdBySessionId(sessionId)
+  }
+
+  /**
+   * 主动发一条消息到指定聊天（定时任务完成通知）
+   *
+   * 不带 msg_id，因此是**主动消息**：不受被动回复窗口限制，但受主动消息频次与日限
+   * 约束，且用户可以在 QQ 里关掉「允许主动发送」—— 关了会在这里抛错，由调用方
+   * 降级处理。
+   */
+  async sendTextToChat(chatId: string, text: string): Promise<void> {
+    const target = decodeQQChatId(chatId)
+    if (!target) throw new Error(`非法的 QQ 会话标识: ${chatId}`)
+    if (!this.api || this.state.status !== 'connected') {
+      throw new Error(`QQ Bot "${this.botConfig.name}" 未连接`)
+    }
+    await this.api.sendMarkdown(target.kind, target.openid, truncateForSingleMessage(text))
   }
 
   private get logPrefix(): string {

@@ -6,6 +6,7 @@
  * 关键协议点：
  * - 被动回复必须带 `msg_id`（回消息）或 `event_id`（回事件），并带 `msg_seq`；
  *   同一 msg_id 的多次回复靠 msg_seq 递增，重复的 msg_id + msg_seq 会被拒。
+ *   三者都不带就是**主动消息**（定时任务通知走这条），另有频次与日限。
  * - 富媒体分两步：先 POST 到 `/files` 拿 `file_info`，再发 `msg_type: 7` +
  *   `media: { file_info }`。上传用 base64，不是 multipart。
  */
@@ -52,7 +53,7 @@ export class QQApiClient {
   }
 
   /**
-   * 发送 markdown 消息（被动回复）
+   * 发送 markdown 消息
    *
    * 用 msg_type 2 + markdown.content 走自定义 markdown —— 按官方 2026/04/23 的能力
    * 更新，单聊与群聊的自定义 markdown 已对所有机器人开放，无需申请模板。
@@ -62,23 +63,26 @@ export class QQApiClient {
    * 以及不支持语法的降级方式。这里按产品决定不做预处理，原样发送；若实际渲染不佳，
    * 把 msg_type 改回 TEXT、content 换成 text 即可退回纯文本。
    *
-   * @param msgId 收到的消息 id，被动回复必须带上
-   * @param msgSeq 同一 msgId 的第几次回复，从 1 开始递增
+   * @param msgId 收到的消息 id。**省略即主动消息** —— 官方按字段区分消息类型：
+   *   带 msg_id 是被动回复、带 event_id 是回事件、都不带就是主动消息。定时任务的
+   *   完成通知走这条路（跑完时早已不在被动回复窗口内）。主动消息受频次与日限约束
+   *   （个人认证：单聊 1000 条/人/天、群聊 1000 条/群/天，20 条/分钟/关系链），
+   *   且用户可以在 QQ 里关掉「允许主动发送」，关了则一律失败。
+   * @param msgSeq 同一 msgId 的第几次回复，从 1 开始递增；主动消息不需要
    */
   async sendMarkdown(
     kind: QQTargetKind,
     openid: string,
     text: string,
-    msgId: string,
-    msgSeq: number,
+    msgId?: string,
+    msgSeq?: number,
   ): Promise<QQSendMessageResult> {
     return this.request<QQSendMessageResult>('POST', this.messagePath(kind, openid), {
       // markdown 消息仍需带 content 字段（留空），与官方 SDK 的负载结构一致
       content: '',
       msg_type: QQ_MSG_TYPE.MARKDOWN,
       markdown: { content: text },
-      msg_id: msgId,
-      msg_seq: msgSeq,
+      ...(msgId ? { msg_id: msgId, msg_seq: msgSeq } : {}),
     })
   }
 

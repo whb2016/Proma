@@ -19,8 +19,8 @@ import type {
 } from '@proma/shared'
 import { WECHAT_IPC_CHANNELS, WECHAT_ITEM_TYPE, WECHAT_MEDIA_TYPE, WECHAT_MESSAGE_TYPE, WECHAT_MESSAGE_STATE, WECHAT_TYPING_STATUS } from '@proma/shared'
 import { getDecryptedCredentials, saveWeChatCredentials, clearWeChatCredentials, getWeChatConfig, updateWeChatDefaultWorkspace } from './wechat-config'
-import { getWeChatBindingsPath, getWeChatSyncPath } from './config-paths'
-import { BridgeCommandHandler, type BridgeAttachment } from './bridge-command-handler'
+import { getWeChatBindingsPath, getWeChatContextTokensPath, getWeChatSyncPath } from './config-paths'
+import { BridgeCommandHandler, type BridgeAttachment, type BridgeChatBinding } from './bridge-command-handler'
 import { createJsonBridgeChatBindingStore } from './bridge-binding-store'
 import { inferImageMediaType, saveImageToSession, saveFileToSession, inferExtension, MAX_IMAGE_SIZE } from './bridge-attachment-utils'
 import { isImageAttachment, resolveOutboundAttachmentPath } from './bridge-outbound-attachment'
@@ -149,7 +149,8 @@ interface GetUpdatesResponse {
 }
 
 interface SendMessageResponse {
-  ret: number
+  /** 实测成功时**不返回**该字段，只有出错才带；判成功要用 `ret == null || ret === 0` */
+  ret?: number
   errmsg?: string
 }
 
@@ -558,11 +559,21 @@ class WeChatBridge {
   private static readonly PENDING_IMAGES_TTL = 10 * 60 * 1000 // 10 minutes
   private static readonly PENDING_IMAGES_MAX = 15
   private static readonly PENDING_FILES_MAX = 15
+  /** context_token 缓存条数上限（聊天绑定通常只有个位数） */
+  private static readonly MAX_CONTEXT_TOKENS = 200
   private pendingImagesCleanupTimer: ReturnType<typeof setInterval> | null = null
   /** chatId → typing_ticket 缓存（取 ticket 要额外一次 getconfig） */
   private typingTickets = new Map<string, { ticket: string; fetchedAt: number }>()
   /** chatId → 正在维持的输入状态（存在即表示该会话处于「正在输入」） */
   private typingSessions = new Map<string, { timer: ReturnType<typeof setInterval>; ticket: string }>()
+  /**
+   * chatId → 最近一次收到消息时的 context_token
+   *
+   * 发消息必须带 context_token，而它只随入站消息下发。定时任务的完成通知是主动
+   * 推送、手上没有新消息，只能复用最近这一个。持久化是为了应用重启后仍能推送
+   * （否则用户得先手动发一条消息才能收到通知）。
+   */
+  private lastContextTokens = new Map<string, string>()
 
   /** 通用命令处理器（命令路由 + Agent 消息路由 + EventBus 监听） */
   private commandHandler = new BridgeCommandHandler({
@@ -690,6 +701,40 @@ class WeChatBridge {
     return this.commandHandler.removeBindingsForDeletedWorkspace(workspaceId, sessionIds)
   }
 
+  /** 当前有效的聊天绑定（定时任务推送目标列表用） */
+  listBindings(): BridgeChatBinding[] {
+    return this.commandHandler.listBindings()
+  }
+
+  /** 反查会话绑定在哪个聊天上 */
+  getChatIdBySessionId(sessionId: string): string | undefined {
+    return this.commandHandler.getChatIdBySessionId(sessionId)
+  }
+
+  /**
+   * 主动发一条消息到指定聊天（定时任务完成通知）
+   *
+   * iLink 的 sendmessage 必须带 context_token，而 token 只能从收到的消息里拿 ——
+   * 所以这里用缓存的最近一次 token。官方没有说明 token 的有效期，因此它有可能已经
+   * 失效。
+   *
+   * 注意：iLink 的失败是 HTTP 200 + `ret != 0`，通用 post() 不检查这个字段，所以
+   * 必须在这里自己判 —— 否则推送失败会被当成成功，用户既收不到通知也看不到原因。
+   * 但**成功时响应里根本没有 ret**（实测），因此缺字段要算成功，不能按 `!== 0` 判。
+   */
+  async sendTextToChat(chatId: string, text: string): Promise<void> {
+    if (!this.client) throw new Error('微信未连接')
+    const contextToken = this.lastContextTokens.get(chatId)
+    if (!contextToken) {
+      throw new Error('没有可用的会话上下文（请先在微信里给 Bot 发一条消息）')
+    }
+    const resp = await this.client.sendText(chatId, text, contextToken)
+    if (typeof resp.ret === 'number' && resp.ret !== 0) {
+      const detail = resp.errmsg ? `: ${resp.errmsg}` : ''
+      throw new Error(`微信拒绝了推送（ret=${resp.ret}${detail}），会话上下文可能已过期`)
+    }
+  }
+
   /** 开始扫码登录流程 */
   async startLogin(): Promise<void> {
     // 清理现有连接，但不推送 'disconnected' 状态，避免 UI 闪烁导致重复触发
@@ -768,6 +813,9 @@ class WeChatBridge {
     clearWeChatCredentials()
     this.getUpdatesBuf = ''
     this.saveSyncBuf()
+    // 换号后旧 token 必然无效，留着只会让推送报错
+    this.lastContextTokens.clear()
+    this.saveContextTokens()
     console.log('[微信 Bridge] 已登出')
   }
 
@@ -847,6 +895,7 @@ class WeChatBridge {
     this.client = new ILinkClient(creds)
     this.pollAbortController = new AbortController()
     this.loadSyncBuf()
+    this.loadContextTokens()
 
     // 订阅 Agent EventBus 接收 Agent 回复
     this.commandHandler.subscribe()
@@ -976,6 +1025,9 @@ class WeChatBridge {
 
     // 纯粹的空消息
     if (!text.trim() && imageItems.length === 0 && fileItems.length === 0) return
+
+    // 记下 token：定时任务的完成通知是主动推送，届时只能靠这个最近值
+    this.rememberContextToken(chatId, contextToken)
 
     console.log('[微信 Bridge] 收到消息:', redactSensitiveLogValue({
       from: chatId,
@@ -1245,6 +1297,55 @@ class WeChatBridge {
       if (ticket) void this.hideTyping(chatId, ticket)
     }
     this.typingTickets.clear()
+  }
+
+  // ===== 会话上下文持久化 =====
+
+  /**
+   * 记下某个聊天最近一次的 context_token
+   *
+   * 只在值变化时落盘 —— 每条入站消息都写文件没必要。条数上限防止长期运行后无界
+   * 增长；聊天绑定通常只有个位数，200 足够。
+   */
+  private rememberContextToken(chatId: string, contextToken: string): void {
+    if (!contextToken) return
+    if (this.lastContextTokens.get(chatId) === contextToken) return
+    this.lastContextTokens.set(chatId, contextToken)
+    while (this.lastContextTokens.size > WeChatBridge.MAX_CONTEXT_TOKENS) {
+      const oldest = this.lastContextTokens.keys().next()
+      if (oldest.done) break
+      this.lastContextTokens.delete(oldest.value)
+    }
+    this.saveContextTokens()
+  }
+
+  private loadContextTokens(): void {
+    const path = getWeChatContextTokensPath()
+    if (!existsSync(path)) return
+    try {
+      const data = JSON.parse(readFileSync(path, 'utf-8')) as unknown
+      if (!data || typeof data !== 'object') return
+      for (const [chatId, token] of Object.entries(data as Record<string, unknown>)) {
+        if (typeof token === 'string' && token) this.lastContextTokens.set(chatId, token)
+      }
+      if (this.lastContextTokens.size > 0) {
+        console.log(`[微信 Bridge] 已加载 ${this.lastContextTokens.size} 个会话上下文`)
+      }
+    } catch {
+      // 坏文件不值得中断启动：下一条入站消息会重新写入
+    }
+  }
+
+  private saveContextTokens(): void {
+    try {
+      writeFileSync(
+        getWeChatContextTokensPath(),
+        JSON.stringify(Object.fromEntries(this.lastContextTokens)),
+        'utf-8',
+      )
+    } catch (error) {
+      console.warn('[微信 Bridge] 保存会话上下文失败:', redactSensitiveLogValue(error))
+    }
   }
 
   // ===== 同步游标持久化 =====

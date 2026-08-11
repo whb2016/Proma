@@ -118,6 +118,7 @@ import type {
   FileAccessOptions,
   ResolvedFileUrl,
   Automation,
+  AutomationPushTargetOption,
   CreateAutomationInput,
   UpdateAutomationInput,
   Todo,
@@ -219,6 +220,7 @@ import {
   deleteAutomation,
 } from './lib/automation-manager'
 import { runAutomationNow, broadcastChanged as broadcastAutomationsChanged } from './lib/automation-scheduler'
+import { listAutomationPushTargets } from './lib/automation-push-targets'
 import {
   listTodos,
   getTodo,
@@ -5132,18 +5134,24 @@ export function registerIpcHandlers(): void {
   const validateAutomationNotificationTargets = (targets: unknown): void => {
     if (targets === undefined) return
     if (!Array.isArray(targets)) throw new Error('notificationTargets 必须是数组')
+    // 界面单选，只会有 0 或 1 个；上限放宽到 5 是为了不误伤历史数据
     if (targets.length > 5) throw new Error('notificationTargets 最多 5 个')
 
     for (const target of targets) {
       if (!target || typeof target !== 'object') throw new Error('notificationTargets 包含非法目标')
       const t = target as Record<string, unknown>
-      if (t.type !== 'feishu') throw new Error(`不支持的通知目标: ${String(t.type)}`)
+      if (t.type !== 'feishu' && t.type !== 'wechat' && t.type !== 'qq') {
+        throw new Error(`不支持的通知目标: ${String(t.type)}`)
+      }
       if (typeof t.enabled !== 'boolean') throw new Error('notificationTargets.enabled 必须是 boolean')
       if (!validAutomationNotificationTrigger(t.trigger)) {
         throw new Error(`非法的 notificationTargets.trigger: ${String(t.trigger)}`)
       }
       if (!isNonEmptyString(t.botId)) throw new Error('notificationTargets.botId 必填')
       if (!isNonEmptyString(t.chatId)) throw new Error('notificationTargets.chatId 必填')
+      if (t.label !== undefined && typeof t.label !== 'string') {
+        throw new Error('notificationTargets.label 必须是字符串')
+      }
     }
   }
 
@@ -5212,6 +5220,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     AUTOMATION_IPC_CHANNELS.LIST,
     async (): Promise<Automation[]> => listAutomations()
+  )
+
+  ipcMain.handle(
+    AUTOMATION_IPC_CHANNELS.LIST_PUSH_TARGETS,
+    async (): Promise<AutomationPushTargetOption[]> => listAutomationPushTargets()
   )
 
   ipcMain.handle(

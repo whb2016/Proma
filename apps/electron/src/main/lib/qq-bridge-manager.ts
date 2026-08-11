@@ -6,6 +6,7 @@
  */
 import type { QQBotBridgeState, QQBridgeState, QQMultiBridgeState, QQTestResult } from '@proma/shared'
 import { QQBridge } from './qq-bridge'
+import type { BridgeChatBinding } from './bridge-command-handler'
 import { getDecryptedBotAppSecret, getQQBotById, getQQMultiBotConfig } from './qq-config'
 import { getQQBotBindingsPath } from './config-paths'
 import { isBindingForDeletedWorkspace, loadBridgeChatBindings, saveBridgeChatBindings } from './bridge-binding-store'
@@ -103,6 +104,34 @@ class QQBridgeManager {
 
   getBridge(botId: string): QQBridge | undefined {
     return this.bridges.get(botId)
+  }
+
+  /** 运行中所有 Bot 的聊天绑定（定时任务推送目标列表用） */
+  listAllBindings(): Array<{ botId: string; botName: string; bindings: BridgeChatBinding[] }> {
+    const result: Array<{ botId: string; botName: string; bindings: BridgeChatBinding[] }> = []
+    for (const bot of getQQMultiBotConfig().bots) {
+      const bridge = this.bridges.get(bot.id)
+      if (!bridge) continue
+      const bindings = bridge.listBindings()
+      if (bindings.length > 0) result.push({ botId: bot.id, botName: bot.name, bindings })
+    }
+    return result
+  }
+
+  /** 反查会话来自哪个 Bot 的哪个聊天 */
+  findChatBySessionId(sessionId: string): { botId: string; chatId: string } | undefined {
+    for (const [botId, bridge] of this.bridges) {
+      const chatId = bridge.getChatIdBySessionId(sessionId)
+      if (chatId) return { botId, chatId }
+    }
+    return undefined
+  }
+
+  /** 主动发消息到指定聊天（定时任务完成通知）；Bot 未运行时抛错 */
+  async sendTextToChat(botId: string, chatId: string, text: string): Promise<void> {
+    const bridge = this.bridges.get(botId)
+    if (!bridge) throw new Error(`QQ Bot 未运行: ${botId}`)
+    await bridge.sendTextToChat(chatId, text)
   }
 
   /**

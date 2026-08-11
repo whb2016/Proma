@@ -50,6 +50,18 @@ export function maxRepliesFor(kind: QQTargetKind): number {
 export const QQ_TEXT_CHUNK_SIZE = 2000
 
 /**
+ * 截断到单条消息以内
+ *
+ * 主动消息（定时任务通知）只发一条 —— 通知本身是摘要，完整内容回 Proma 里看，
+ * 多发几条只会更快撞上主动消息的频次限制。
+ */
+export function truncateForSingleMessage(text: string): string {
+  if (text.length <= QQ_TEXT_CHUNK_SIZE) return text
+  const suffix = '\n\n（内容过长已截断，完整结果见 Proma）'
+  return text.slice(0, QQ_TEXT_CHUNK_SIZE - suffix.length) + suffix
+}
+
+/**
  * 把回复切成不超过配额的段
  *
  * 超出部分不静默丢弃：末段追加提示，让用户知道内容被截断了。

@@ -594,6 +594,18 @@ export function getWeChatBindingsPath(): string {
 }
 
 /**
+ * 获取微信会话上下文（context_token）缓存路径
+ *
+ * iLink 发消息必须带 context_token，而它只随入站消息下发。定时任务的完成通知是
+ * 主动推送，只能复用最近一次的 token，重启后也要能用，所以单独落盘。
+ *
+ * @returns ~/.proma/wechat-context.json
+ */
+export function getWeChatContextTokensPath(): string {
+  return join(getConfigDir(), 'wechat-context.json')
+}
+
+/**
  * 获取钉钉配置文件路径
  *
  * @returns ~/.proma/dingtalk.json

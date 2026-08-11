@@ -111,6 +111,7 @@ import type {
   AgentQueueMessageInput,
   PendingRequestsSnapshot,
   Automation,
+  AutomationPushTargetOption,
   CreateAutomationInput,
   UpdateAutomationInput,
   Todo,
@@ -1196,6 +1197,8 @@ export interface ElectronAPI {
   // ===== 定时任务（Automation）=====
   /** 获取全部定时任务 */
   listAutomations: () => Promise<Automation[]>
+  /** 获取可选的远程推送目标（各平台运行中的聊天绑定） */
+  listAutomationPushTargets: () => Promise<AutomationPushTargetOption[]>
   /** 创建定时任务 */
   createAutomation: (input: CreateAutomationInput) => Promise<Automation>
   /** 更新定时任务 */
@@ -2791,6 +2794,7 @@ const electronAPI: ElectronAPI = {
 
   // ===== 定时任务（Automation）=====
   listAutomations: () => ipcRenderer.invoke(AUTOMATION_IPC_CHANNELS.LIST),
+  listAutomationPushTargets: () => ipcRenderer.invoke(AUTOMATION_IPC_CHANNELS.LIST_PUSH_TARGETS),
   createAutomation: (input: CreateAutomationInput) =>
     ipcRenderer.invoke(AUTOMATION_IPC_CHANNELS.CREATE, input),
   updateAutomation: (input: UpdateAutomationInput) =>

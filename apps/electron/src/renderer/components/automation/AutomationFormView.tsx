@@ -21,6 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
   SelectContent,
+  SelectGroup,
+  SelectLabel,
   SelectItem,
 } from '@/components/ui/select'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -41,15 +43,15 @@ import { useOpenSession } from '@/hooks/useOpenSession'
 import { MarkdownRichEditor } from '@/components/diff/MarkdownRichEditor'
 import { LocalProjectBadge } from '@/components/agent/LocalProjectBadge'
 import type {
-  AutomationFeishuNotificationTarget,
   AutomationNotificationTarget,
+  AutomationPushTargetOption,
   AutomationRun,
   CreateAutomationInput,
-  FeishuChatBinding,
   UpdateAutomationInput,
 } from '@proma/shared'
 
-const NO_FEISHU_BINDING = '__none__'
+/** 下拉里代表「不推送到远程渠道」的哨兵值（Radix Select 的 value 不能为空串） */
+const NO_PUSH_TARGET = '__none__'
 
 function formatTime(ts?: number): string {
   if (!ts) return '—'
@@ -163,29 +165,42 @@ function draftToUpdateInput(draft: AutomationDraft): UpdateAutomationInput {
   }
 }
 
-function getFeishuTarget(targets?: AutomationNotificationTarget[]): AutomationFeishuNotificationTarget | undefined {
-  return targets?.find((target): target is AutomationFeishuNotificationTarget => target.type === 'feishu')
+/** 当前生效的远程推送目标（界面单选，取第一个启用的） */
+function getPushTarget(targets?: AutomationNotificationTarget[]): AutomationNotificationTarget | undefined {
+  return targets?.find((target) => target.enabled)
 }
 
-function getFeishuBindingValue(binding: FeishuChatBinding): string {
-  return `${binding.botId}::${binding.chatId}`
+/** 下拉项的值：渠道 + Bot + 聊天三者才唯一 */
+function pushTargetKey(channel: string, botId: string, chatId: string): string {
+  return `${channel}::${botId}::${chatId}`
 }
 
-function formatFeishuBinding(binding: FeishuChatBinding): string {
-  const name = binding.chatType === 'group'
-    ? binding.groupName || '未命名群聊'
-    : '飞书单聊'
-  return `${name} · ${binding.botId.slice(0, 8)}`
-}
-
-function createFeishuTarget(binding: FeishuChatBinding): AutomationFeishuNotificationTarget {
+function createPushTarget(
+  option: AutomationPushTargetOption,
+  trigger: AutomationNotificationTarget['trigger'] = 'always',
+): AutomationNotificationTarget {
   return {
-    type: 'feishu',
+    type: option.channel,
     enabled: true,
-    trigger: 'always',
-    botId: binding.botId,
-    chatId: binding.chatId,
+    trigger,
+    botId: option.botId,
+    chatId: option.chatId,
+    label: option.label,
   }
+}
+
+/** 按平台分组，保持主进程给出的顺序 */
+function groupPushTargets(options: AutomationPushTargetOption[]): Array<{
+  groupLabel: string
+  options: AutomationPushTargetOption[]
+}> {
+  const groups: Array<{ groupLabel: string; options: AutomationPushTargetOption[] }> = []
+  for (const option of options) {
+    const last = groups[groups.length - 1]
+    if (last && last.groupLabel === option.groupLabel) last.options.push(option)
+    else groups.push({ groupLabel: option.groupLabel, options: [option] })
+  }
+  return groups
 }
 
 function AutomationPromptEmptyGuide(): React.ReactElement {
@@ -275,7 +290,7 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
   const [form, setForm] = React.useState<AutomationDraft | null>(null)
   const [editingName, setEditingName] = React.useState(false)
   const [runningNow, setRunningNow] = React.useState(false)
-  const [feishuBindings, setFeishuBindings] = React.useState<FeishuChatBinding[]>([])
+  const [pushTargets, setPushTargets] = React.useState<AutomationPushTargetOption[]>([])
   const [saveStatus, setSaveStatus] = React.useState<SaveStatus>('idle')
   const [lastSavedAt, setLastSavedAt] = React.useState<number | null>(null)
   const nameInputRef = React.useRef<HTMLInputElement>(null)
@@ -318,10 +333,10 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
 
   React.useEffect(() => {
     if (!formState.open) return
-    window.electronAPI.listFeishuBindings()
-      .then((bindings) => setFeishuBindings(bindings.filter((binding) => !binding.archived)))
+    window.electronAPI.listAutomationPushTargets()
+      .then(setPushTargets)
       .catch((err: unknown) => {
-        console.error('[定时任务] 获取飞书绑定失败:', err)
+        console.error('[定时任务] 获取推送目标失败:', err)
       })
   }, [formState.open])
 
@@ -476,7 +491,7 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
     setForm((prev) => (prev ? { ...prev, ...patch } : prev))
   }
 
-  const updateFeishuNotification = (target: AutomationFeishuNotificationTarget | null): void => {
+  const updatePushTarget = (target: AutomationNotificationTarget | null): void => {
     update({ notificationTargets: target ? [target] : [] })
   }
 
@@ -563,13 +578,15 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
   const selectedModel = form.channelId && form.modelId
     ? { channelId: form.channelId, modelId: form.modelId }
     : null
-  const feishuTarget = getFeishuTarget(form.notificationTargets)
-  const selectedFeishuBinding = feishuTarget
-    ? feishuBindings.find((binding) => binding.botId === feishuTarget.botId && binding.chatId === feishuTarget.chatId)
-    : undefined
-  const selectedFeishuBindingValue = selectedFeishuBinding
-    ? getFeishuBindingValue(selectedFeishuBinding)
-    : NO_FEISHU_BINDING
+  const pushTarget = getPushTarget(form.notificationTargets)
+  const pushTargetValue = pushTarget
+    ? pushTargetKey(pushTarget.type, pushTarget.botId, pushTarget.chatId)
+    : NO_PUSH_TARGET
+  const pushTargetGroups = groupPushTargets(pushTargets)
+  const optionKey = (option: AutomationPushTargetOption): string =>
+    pushTargetKey(option.channel, option.botId, option.chatId)
+  // 目标已不在可选列表里（Bot 停用、绑定被清）：仍要显示，不能静默改写用户配置
+  const pushTargetMissing = !!pushTarget && !pushTargets.some((option) => optionKey(option) === pushTargetValue)
 
   return (
     <div className="titlebar-no-drag absolute inset-0 z-10 bg-content-area flex animate-in fade-in duration-200">
@@ -960,69 +977,66 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
             )}
           </div>
 
-          {/* 飞书通知 */}
+          {/* 完成通知 */}
           <div className="flex flex-col gap-2 rounded-lg bg-foreground/[0.03] p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-start gap-2">
-                <Bell className="size-4 shrink-0 mt-0.5 text-primary" />
-                <div className="flex flex-col gap-0.5">
-                  <Label htmlFor="auto-feishu-notify">飞书通知</Label>
-                  <span className="text-xs text-muted-foreground leading-relaxed">
-                    任务结束后把结果推送到已有飞书绑定
-                  </span>
-                </div>
+            <div className="flex items-start gap-2">
+              <Bell className="size-4 shrink-0 mt-0.5 text-primary" />
+              <div className="flex flex-col gap-0.5">
+                <Label htmlFor="auto-push-target">推送到远程渠道</Label>
+                <span className="text-xs text-muted-foreground leading-relaxed">
+                  任务结束都会发本机系统通知；这里可以再挑一个已连接的聊天，把结果一并推过去
+                </span>
               </div>
-              <Switch
-                id="auto-feishu-notify"
-                checked={feishuTarget?.enabled === true}
-                onCheckedChange={(checked) => {
-                  if (!checked) {
-                    updateFeishuNotification(null)
-                    return
-                  }
-                  const target = selectedFeishuBinding ?? feishuBindings[0]
-                  if (!target) {
-                    toast.error('暂无飞书绑定，请先在飞书里向 Bot 发送一条消息')
-                    return
-                  }
-                  updateFeishuNotification(feishuTarget
-                    ? { ...feishuTarget, enabled: true }
-                    : createFeishuTarget(target))
-                }}
-              />
             </div>
 
-            {feishuTarget?.enabled === true && (
-              <div className="flex flex-col gap-2 pt-1">
-                <Select
-                  value={selectedFeishuBindingValue}
-                  onValueChange={(value) => {
-                    const binding = feishuBindings.find((item) => getFeishuBindingValue(item) === value)
-                    if (!binding) return
-                    updateFeishuNotification({
-                      ...createFeishuTarget(binding),
-                      trigger: feishuTarget.trigger,
-                    })
-                  }}
-                >
-                  <SelectTrigger><SelectValue placeholder="选择飞书聊天" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_FEISHU_BINDING} disabled>
-                      {feishuBindings.length === 0 ? '暂无飞书绑定' : '选择飞书聊天'}
-                    </SelectItem>
-                    {feishuBindings.map((binding) => (
-                      <SelectItem key={getFeishuBindingValue(binding)} value={getFeishuBindingValue(binding)}>
-                        {formatFeishuBinding(binding)}
+            <Select
+              value={pushTargetValue}
+              onValueChange={(value) => {
+                if (value === NO_PUSH_TARGET) {
+                  updatePushTarget(null)
+                  return
+                }
+                const option = pushTargets.find((item) => optionKey(item) === value)
+                if (!option) return
+                updatePushTarget(createPushTarget(option, pushTarget?.trigger ?? 'always'))
+              }}
+            >
+              <SelectTrigger id="auto-push-target">
+                <SelectValue placeholder="不推送" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_PUSH_TARGET}>不推送</SelectItem>
+                {pushTargetMissing && pushTarget && (
+                  <SelectItem value={pushTargetValue}>
+                    {`${pushTarget.label ?? pushTarget.chatId}（绑定已失效）`}
+                  </SelectItem>
+                )}
+                {pushTargetGroups.map((group) => (
+                  <SelectGroup key={group.groupLabel}>
+                    <SelectLabel>{group.groupLabel}</SelectLabel>
+                    {group.options.map((option) => (
+                      <SelectItem key={optionKey(option)} value={optionKey(option)}>
+                        {option.label}
                       </SelectItem>
                     ))}
-                  </SelectContent>
-                </Select>
+                  </SelectGroup>
+                ))}
+                {pushTargets.length === 0 && (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    暂无可用渠道：先在设置-远程连接里连上 Bot，并在聊天里发一条消息
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
+
+            {pushTarget && (
+              <div className="flex flex-col gap-2">
                 <Select
-                  value={feishuTarget.trigger}
+                  value={pushTarget.trigger}
                   onValueChange={(value) => {
-                    updateFeishuNotification({
-                      ...feishuTarget,
-                      trigger: value as AutomationFeishuNotificationTarget['trigger'],
+                    updatePushTarget({
+                      ...pushTarget,
+                      trigger: value as AutomationNotificationTarget['trigger'],
                     })
                   }}
                 >

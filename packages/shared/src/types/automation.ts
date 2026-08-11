@@ -47,20 +47,55 @@ export const AUTOMATION_DEFAULT_SESSION_MODE: AutomationSessionMode = 'daily'
 /** 定时任务通知触发条件 */
 export type AutomationNotificationTrigger = 'always' | 'success' | 'error'
 
-/** 飞书通知目标 */
-export interface AutomationFeishuNotificationTarget {
-  type: 'feishu'
+/**
+ * 可选的远程推送渠道
+ *
+ * 钉钉缺席不是遗漏：钉钉只能用收消息时下发的 sessionWebhook 回复，而它自带
+ * sessionWebhookExpiredTime（约 1.5 小时），定时任务到点推送必然已过期。要支持
+ * 得改走企业机器人主动消息 API（access_token + 单聊 oToMessages/batchSend、
+ * 群聊 groupMessages/send，并缓存 staffId / openConversationId）。
+ */
+export type AutomationNotificationChannel = 'feishu' | 'wechat' | 'qq'
+
+/**
+ * 定时任务的远程推送目标
+ *
+ * 本机系统通知是无条件行为（每次运行结束都发，只受设置里的通知总开关约束），
+ * 因此不在这里表达。数组当前最多一项（界面单选），保留数组形态是为了兼容已落盘
+ * 的旧数据，也留出以后多选的余地。
+ */
+export interface AutomationNotificationTarget {
+  type: AutomationNotificationChannel
   enabled: boolean
   /** 通知触发条件：默认 always */
   trigger: AutomationNotificationTrigger
-  /** 负责发送通知的飞书 Bot ID */
+  /** 负责发送通知的 Bot ID（微信是单实例，固定 WECHAT_SINGLETON_BOT_ID） */
   botId: string
-  /** 飞书 chat_id（来自已有绑定） */
+  /** 平台侧的会话标识（来自已有绑定） */
   chatId: string
+  /**
+   * 选中时快照下来的展示名。
+   * 绑定后来失效（Bot 停用、会话被删）时，界面仍能说清「原来是推给谁的」。
+   */
+  label?: string
 }
 
-/** 定时任务通知目标（钉钉/微信后续扩展） */
-export type AutomationNotificationTarget = AutomationFeishuNotificationTarget
+/** @deprecated 保留旧名，飞书目标现在就是通用的远程推送目标 */
+export type AutomationFeishuNotificationTarget = AutomationNotificationTarget
+
+/** 微信是单实例集成（没有多 Bot），botId 用这个固定值占位 */
+export const WECHAT_SINGLETON_BOT_ID = 'default'
+
+/** 可供选择的推送目标（由主进程汇总各平台运行中的聊天绑定后下发） */
+export interface AutomationPushTargetOption {
+  channel: AutomationNotificationChannel
+  botId: string
+  chatId: string
+  /** 完整展示名，如「微信 · 微信会话 (a1b2…)」 */
+  label: string
+  /** 平台名，用于下拉分组，如「微信」「QQ 宵宫」 */
+  groupLabel: string
+}
 
 /** 定时任务定义 */
 export interface Automation {
@@ -195,6 +230,8 @@ export const AUTOMATION_IPC_CHANNELS = {
   TOGGLE: 'automation:toggle',
   /** 立即运行一次（不影响调度计时） */
   RUN_NOW: 'automation:run-now',
+  /** 列出可选的远程推送目标（各平台运行中的聊天绑定） */
+  LIST_PUSH_TARGETS: 'automation:list-push-targets',
   /** 任务列表变更事件（main → renderer，运行完成/状态变化时推送） */
   CHANGED: 'automation:changed',
 } as const

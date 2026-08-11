@@ -203,6 +203,27 @@ export class BridgeCommandHandler {
     return this.getValidBinding(chatId)
   }
 
+  /** 列出当前有效的聊天绑定（定时任务推送目标列表用） */
+  listBindings(): BridgeChatBinding[] {
+    const valid: BridgeChatBinding[] = []
+    for (const chatId of [...this.chatBindings.keys()]) {
+      const binding = this.getValidBinding(chatId)
+      if (binding) valid.push(binding)
+    }
+    return valid
+  }
+
+  /**
+   * 反查会话绑定在哪个聊天上。
+   *
+   * 定时任务用它判断「这个会话是从哪个聊天进来的」，从而默认把完成通知推回原处。
+   */
+  getChatIdBySessionId(sessionId: string): string | undefined {
+    const chatId = this.sessionToChat.get(sessionId)
+    if (!chatId) return undefined
+    return this.getValidBinding(chatId)?.chatId
+  }
+
   /**
    * 在删除工作区前清理所有指向该工作区或其即将删除会话的绑定。
    * 返回实际删除的绑定数，调用方无需分别处理内存和持久化存储。

@@ -174,3 +174,6 @@ publish:
   provider: github
   owner: whb2016
   repo: Proma
+  # 默认是 draft，而草稿 Release 对 electron-updater 不可见（拉不到 latest.yml），
+  # 等于没有自动更新。这里直接发布，代价是产物一上传就对用户可见。
+  releaseType: release

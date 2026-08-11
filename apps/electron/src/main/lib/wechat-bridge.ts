@@ -38,6 +38,12 @@ const LONG_POLL_TIMEOUT_MS = 40_000
 const SEND_TIMEOUT_MS = 15_000
 const MAX_CONSECUTIVE_FAILURES = 5
 const INITIAL_BACKOFF_MS = 3_000
+
+/**
+ * iLink 协议版本。官方文档与 SDK 均要求所有业务请求统一携带 base_info.channel_version，
+ * 此前仅 getupdates 带了 1.0.0、其余请求传空对象。
+ */
+const CHANNEL_VERSION = '2.0.0'
 const MAX_BACKOFF_MS = 60_000
 const SESSION_EXPIRED_CODE = -14
 const DOWNLOAD_MEDIA_TIMEOUT_MS = 30_000
@@ -178,11 +184,16 @@ class ILinkClient {
     return this.botId
   }
 
+  /** 所有业务请求统一携带的 base_info */
+  private baseInfo(): { channel_version: string } {
+    return { channel_version: CHANNEL_VERSION }
+  }
+
   /** 长轮询获取消息 */
   async getUpdates(buf: string, signal?: AbortSignal): Promise<GetUpdatesResponse> {
     return this.post<GetUpdatesResponse>('/ilink/bot/getupdates', {
       get_updates_buf: buf,
-      base_info: { channel_version: '1.0.0' },
+      base_info: this.baseInfo(),
     }, LONG_POLL_TIMEOUT_MS + 5000, signal)
   }
 
@@ -198,7 +209,7 @@ class ILinkClient {
         item_list: items,
         context_token: contextToken,
       },
-      base_info: {},
+      base_info: this.baseInfo(),
     }, SEND_TIMEOUT_MS)
   }
 
@@ -215,7 +226,7 @@ class ILinkClient {
     return this.post<GetConfigResponse>('/ilink/bot/getconfig', {
       ilink_user_id: userId,
       context_token: contextToken,
-      base_info: {},
+      base_info: this.baseInfo(),
     }, 10_000)
   }
 
@@ -225,7 +236,7 @@ class ILinkClient {
       ilink_user_id: userId,
       typing_ticket: typingTicket,
       status,
-      base_info: {},
+      base_info: this.baseInfo(),
     }, 10_000)
   }
 

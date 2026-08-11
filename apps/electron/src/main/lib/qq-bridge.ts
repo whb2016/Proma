@@ -200,6 +200,12 @@ export class QQBridge {
     const text = (message.content ?? '').replace(/<@!?\d+>/g, '').trim()
     const attachments = await this.saveAttachments(chatId, message.attachments)
 
+    // 单聊先亮「正在输入」气泡，取代原先那条「⏳ Agent 处理中」文本消息。
+    // 群聊不支持该能力，只能静默等待。
+    if (target.kind === 'c2c') {
+      await this.sendTypingIndicator(target.openid, message.id)
+    }
+
     try {
       await this.commandHandler.handleIncomingMessage(
         chatId,
@@ -290,6 +296,20 @@ export class QQBridge {
   }
 
   // ===== 出站 =====
+
+  /**
+   * 亮「正在输入」气泡（仅单聊）
+   *
+   * 失败不应影响正常回复 —— 这只是个体验优化，出错就静默跳过。
+   */
+  private async sendTypingIndicator(openid: string, msgId: string): Promise<void> {
+    if (!this.api) return
+    try {
+      await this.api.sendInputNotify(openid, msgId, this.msgSeq.next(msgId))
+    } catch (error) {
+      console.warn(`${this.logPrefix} 发送输入状态失败（忽略）:`, redactSensitiveLogValue(error))
+    }
+  }
 
   /** 发送回复：按配额分段，每段递增 msg_seq。内容按 markdown 发送。 */
   private async sendReply(chatId: string, text: string): Promise<void> {

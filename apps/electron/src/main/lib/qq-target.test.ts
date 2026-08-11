@@ -31,14 +31,15 @@ describe('chatId 编解码', () => {
 })
 
 describe('被动回复分段', () => {
-  test('分段数不超过平台配额（群 4、单聊 3）', () => {
-    // 平台上限是群 5 / 单聊 4，各留一段余量给错误提示
+  test('分段数不超过平台配额（群 4、单聊 2）', () => {
+    // 平台上限群 5 / 单聊 4。群聊留 1 条给附件或错误提示；
+    // 单聊还要先发一条「正在输入」，所以正文只剩 2 条。
     expect(maxRepliesFor('group')).toBe(4)
-    expect(maxRepliesFor('c2c')).toBe(3)
+    expect(maxRepliesFor('c2c')).toBe(2)
 
     const long = 'x'.repeat(QQ_TEXT_CHUNK_SIZE * 10)
     expect(chunkReply(long, 'group')).toHaveLength(4)
-    expect(chunkReply(long, 'c2c')).toHaveLength(3)
+    expect(chunkReply(long, 'c2c')).toHaveLength(2)
   })
 
   test('短文本只发一段且内容不变', () => {
@@ -56,9 +57,9 @@ describe('被动回复分段', () => {
     const long = 'z'.repeat(QQ_TEXT_CHUNK_SIZE * 6)
     const chunks = chunkReply(long, 'c2c')
 
-    expect(chunks).toHaveLength(3)
-    const omitted = QQ_TEXT_CHUNK_SIZE * 6 - QQ_TEXT_CHUNK_SIZE * 3
-    expect(chunks[2]).toContain(`剩余 ${omitted} 字未发送`)
+    expect(chunks).toHaveLength(2)
+    const omitted = QQ_TEXT_CHUNK_SIZE * 6 - QQ_TEXT_CHUNK_SIZE * 2
+    expect(chunks[1]).toContain(`剩余 ${omitted} 字未发送`)
   })
 
   test('未超配额时不追加截断提示', () => {

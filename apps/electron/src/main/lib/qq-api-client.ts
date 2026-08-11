@@ -118,6 +118,31 @@ export class QQApiClient {
     })
   }
 
+  /**
+   * 发送「正在输入」状态（仅单聊）
+   *
+   * 走普通消息端点，但 msg_type 为 6 且带 input_notify —— 官方文档的消息类型页没有
+   * 列出这个能力，是从官方 OpenClaw QQ 插件（@tencent-connect/openclaw-qqbot）的
+   * sendInputNotify 里确认的。效果是对话里出现「...」气泡，随后被真正的回复取代。
+   *
+   * 群聊不支持（官方插件里 sendTyping 对非 c2c 直接抛错），因此这里只接受单聊。
+   *
+   * @param inputSecond 气泡展示时长（秒）
+   */
+  async sendInputNotify(
+    openid: string,
+    msgId: string,
+    msgSeq: number,
+    inputSecond = 30,
+  ): Promise<void> {
+    await this.request('POST', this.messagePath('c2c', openid), {
+      msg_type: QQ_MSG_TYPE.INPUT_NOTIFY,
+      input_notify: { input_type: 1, input_second: inputSecond },
+      msg_id: msgId,
+      msg_seq: msgSeq,
+    })
+  }
+
   /** 验证凭证：能取到网关地址即说明 AppID/AppSecret 与网络都正常 */
   async verify(): Promise<void> {
     await this.getGatewayUrl()

@@ -135,6 +135,13 @@ export const QQ_EVENT = {
 export const QQ_MSG_TYPE = {
   TEXT: 0,
   MARKDOWN: 2,
+  /**
+   * 「正在输入」状态（仅单聊），配合 input_notify 字段。
+   *
+   * 官方文档的消息类型页未列出，取值来自官方 OpenClaw QQ 插件
+   * （@tencent-connect/openclaw-qqbot）的 sendInputNotify 实现。
+   */
+  INPUT_NOTIFY: 6,
   /** 富媒体，需配合 media.file_info */
   MEDIA: 7,
 } as const

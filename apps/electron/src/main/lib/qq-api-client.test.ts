@@ -94,6 +94,30 @@ describe('发送回复', () => {
   })
 })
 
+describe('正在输入状态', () => {
+  test('走普通消息端点，msg_type 6 + input_notify', async () => {
+    await createClient().sendInputNotify('USER_1', 'msg-3', 1, 30)
+
+    expect(captured[0]!.url).toBe('https://api.sgroup.qq.com/v2/users/USER_1/messages')
+    expect(captured[0]!.body).toEqual({
+      msg_type: 6,
+      input_notify: { input_type: 1, input_second: 30 },
+      msg_id: 'msg-3',
+      msg_seq: 1,
+    })
+  })
+
+  test('时长可自定义，默认 30 秒', async () => {
+    const client = createClient()
+    await client.sendInputNotify('U', 'm', 1)
+    expect((captured[0]!.body.input_notify as { input_second: number }).input_second).toBe(30)
+
+    stubFetch({})
+    await client.sendInputNotify('U', 'm', 2, 90)
+    expect((captured[0]!.body.input_notify as { input_second: number }).input_second).toBe(90)
+  })
+})
+
 describe('富媒体两步发送', () => {
   test('先上传取 file_info，再发 msg_type 7', async () => {
     // 第一次调用返回 file_info，第二次是发消息

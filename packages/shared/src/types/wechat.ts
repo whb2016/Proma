@@ -83,6 +83,17 @@ export const WECHAT_MESSAGE_TYPE = {
   BOT: 2,
 } as const
 
+/**
+ * 「正在输入」状态（sendtyping 的 status）
+ *
+ * 输入状态要两步：先用 getconfig 取该用户的 typing_ticket，再调 sendtyping。
+ * 平台没有自动超时的说明，因此开始后必须显式停止，否则气泡会一直挂在会话里。
+ */
+export const WECHAT_TYPING_STATUS = {
+  START: 1,
+  STOP: 2,
+} as const
+
 /** iLink 消息状态 */
 export const WECHAT_MESSAGE_STATE = {
   NEW: 0,

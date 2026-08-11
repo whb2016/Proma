@@ -17,7 +17,7 @@ import type {
   WeChatMediaInfo,
   WeChatMessageItem,
 } from '@proma/shared'
-import { WECHAT_IPC_CHANNELS, WECHAT_ITEM_TYPE, WECHAT_MEDIA_TYPE, WECHAT_MESSAGE_TYPE, WECHAT_MESSAGE_STATE } from '@proma/shared'
+import { WECHAT_IPC_CHANNELS, WECHAT_ITEM_TYPE, WECHAT_MEDIA_TYPE, WECHAT_MESSAGE_TYPE, WECHAT_MESSAGE_STATE, WECHAT_TYPING_STATUS } from '@proma/shared'
 import { getDecryptedCredentials, saveWeChatCredentials, clearWeChatCredentials, getWeChatConfig, updateWeChatDefaultWorkspace } from './wechat-config'
 import { getWeChatBindingsPath, getWeChatSyncPath } from './config-paths'
 import { BridgeCommandHandler, type BridgeAttachment } from './bridge-command-handler'
@@ -73,6 +73,22 @@ const UPLOAD_MAX_RETRIES = 3
 const CDN_BASE_URL = 'https://novac2c.cdn.weixin.qq.com/c2c'
 const HANDLE_MESSAGE_TIMEOUT_MS = 90_000
 const PENDING_IMAGES_CLEANUP_INTERVAL = 7 * 60 * 1000
+
+/**
+ * typing_ticket 缓存时长。文档称有效期约 24 小时，取一半留余量；
+ * 重新登录（bot_token 变化）时整表清空。
+ */
+const TYPING_TICKET_TTL_MS = 12 * 60 * 60 * 1000
+/**
+ * 输入状态刷新间隔
+ *
+ * 平台没有说明输入状态多久自动消失，官方 SDK（@wechatbot/wechatbot）也只发一次
+ * 不做保活。但 Agent 一轮常要跑几十秒到几分钟，气泡若中途消失就失去了意义，
+ * 所以这里定期重发 status=1 兜底。若实测发现状态本就长期有效，可以去掉。
+ */
+const TYPING_REFRESH_INTERVAL_MS = 15_000
+/** 输入状态最长维持时间。Agent 异常挂起时不要把气泡永久留在对话里。 */
+const TYPING_MAX_DURATION_MS = 10 * 60 * 1000
 
 const ALLOWED_CDN_HOSTS = [
   '.weixin.qq.com',
@@ -543,6 +559,10 @@ class WeChatBridge {
   private static readonly PENDING_IMAGES_MAX = 15
   private static readonly PENDING_FILES_MAX = 15
   private pendingImagesCleanupTimer: ReturnType<typeof setInterval> | null = null
+  /** chatId → typing_ticket 缓存（取 ticket 要额外一次 getconfig） */
+  private typingTickets = new Map<string, { ticket: string; fetchedAt: number }>()
+  /** chatId → 正在维持的输入状态（存在即表示该会话处于「正在输入」） */
+  private typingSessions = new Map<string, { timer: ReturnType<typeof setInterval>; ticket: string }>()
 
   /** 通用命令处理器（命令路由 + Agent 消息路由 + EventBus 监听） */
   private commandHandler = new BridgeCommandHandler({
@@ -552,6 +572,8 @@ class WeChatBridge {
         if (!this.client) return
         const ctx = meta as { contextToken?: string } | undefined
         const contextToken = ctx?.contextToken ?? ''
+        // 回复即将出现，先摘下输入状态（同步停掉保活，否则刷新会把气泡重新点亮）
+        const typingTicket = this.takeTypingSession(chatId)
         // 微信单条消息有长度限制，超长分段
         const MAX_LEN = 4000
         const chunks = text.length <= MAX_LEN
@@ -560,12 +582,16 @@ class WeChatBridge {
         for (const chunk of chunks) {
           await this.client.sendText(chatId, chunk, contextToken)
         }
+        if (typingTicket) await this.hideTyping(chatId, typingTicket)
       },
     },
     getDefaultWorkspaceId: () => getWeChatConfig().defaultWorkspaceId,
     bindingStore: createJsonBridgeChatBindingStore(getWeChatBindingsPath(), '微信 Bridge'),
     onWorkspaceSwitched: (workspaceId) => updateWeChatDefaultWorkspace(workspaceId),
     buildPiCustomTools: (ctx) => [this.buildPiSendAttachmentTool(ctx)],
+    // 不发「⏳ Agent 处理中...」：改用微信原生的「正在输入」状态提示，
+    // 少一条噪音消息，也不会在会话里留下一条过时的中间态文本。
+    sendProcessingNotice: false,
   })
 
   /**
@@ -721,6 +747,8 @@ class WeChatBridge {
     this.loginAbortController = null
     this.pollAbortController?.abort()
     this.pollAbortController = null
+    // 必须在 client 置空前熄灯，否则气泡会一直留在用户的会话里
+    this.clearTypingSessions()
     this.client = null
     this.polling = false
     this.commandHandler.unsubscribe()
@@ -1053,6 +1081,7 @@ class WeChatBridge {
 
     // 无媒体 → 原有纯文本路径
     if (allImages.length === 0 && allFiles.length === 0) {
+      await this.startTyping(chatId, text, contextToken)
       await this.commandHandler.handleIncomingMessage(chatId, text, { contextToken })
       return
     }
@@ -1120,7 +1149,102 @@ class WeChatBridge {
       attachments.push({ absolutePath, label: file.fileName, kind: 'file' as const })
     }
 
+    await this.startTyping(chatId, text, contextToken)
     await this.commandHandler.handleIncomingMessage(chatId, text, { contextToken }, attachments)
+  }
+
+  // ===== 「正在输入」状态 =====
+
+  /**
+   * 点亮「正在输入」并保活
+   *
+   * 只用于会触发 Agent 的普通消息：命令的回复是即时的，亮一下反而闪。
+   * 全程失败静默 —— 这是体验优化，不该影响消息处理。
+   */
+  private async startTyping(chatId: string, text: string, contextToken: string): Promise<void> {
+    if (!this.client) return
+    if (text.trimStart().startsWith('/')) return
+
+    // 幂等：重复调用不叠加定时器
+    const stale = this.takeTypingSession(chatId)
+    if (stale) await this.hideTyping(chatId, stale)
+
+    const ticket = await this.getTypingTicket(chatId, contextToken)
+    if (!ticket) return
+    if (!(await this.sendTypingStatus(chatId, ticket, WECHAT_TYPING_STATUS.START))) return
+
+    const startedAt = Date.now()
+    const timer = setInterval(() => {
+      if (Date.now() - startedAt > TYPING_MAX_DURATION_MS) {
+        const held = this.takeTypingSession(chatId)
+        if (held) void this.hideTyping(chatId, held)
+        return
+      }
+      void this.sendTypingStatus(chatId, ticket, WECHAT_TYPING_STATUS.START)
+    }, TYPING_REFRESH_INTERVAL_MS)
+    this.typingSessions.set(chatId, { timer, ticket })
+  }
+
+  /**
+   * 摘下输入状态：停掉保活并交出 ticket
+   *
+   * 返回 undefined 表示该会话本来就不处于输入态（不必多发一次 status=2）。
+   * 拆成"摘下"与"隐藏"两步，是为了让调用方能先同步停掉保活、再决定何时通知平台。
+   */
+  private takeTypingSession(chatId: string): string | undefined {
+    const session = this.typingSessions.get(chatId)
+    if (!session) return undefined
+    clearInterval(session.timer)
+    this.typingSessions.delete(chatId)
+    return session.ticket
+  }
+
+  /** 通知平台隐藏输入状态 */
+  private async hideTyping(chatId: string, ticket: string): Promise<void> {
+    await this.sendTypingStatus(chatId, ticket, WECHAT_TYPING_STATUS.STOP)
+  }
+
+  /** 发送输入状态，返回是否成功（失败仅告警） */
+  private async sendTypingStatus(chatId: string, ticket: string, status: number): Promise<boolean> {
+    // 同步取用，避免 await 期间 stop() 把 client 置空
+    const client = this.client
+    if (!client) return false
+    try {
+      await client.sendTyping(chatId, ticket, status)
+      return true
+    } catch (error) {
+      console.warn('[微信 Bridge] 发送输入状态失败（忽略）:', redactSensitiveLogValue(error))
+      return false
+    }
+  }
+
+  /** 取 typing_ticket（按用户缓存；需要 context_token） */
+  private async getTypingTicket(chatId: string, contextToken: string): Promise<string | undefined> {
+    const cached = this.typingTickets.get(chatId)
+    if (cached && Date.now() - cached.fetchedAt < TYPING_TICKET_TTL_MS) return cached.ticket
+    if (!contextToken) return undefined
+
+    const client = this.client
+    if (!client) return undefined
+    try {
+      const resp = await client.getConfig(chatId, contextToken)
+      if (!resp.typing_ticket) return undefined
+      this.typingTickets.set(chatId, { ticket: resp.typing_ticket, fetchedAt: Date.now() })
+      return resp.typing_ticket
+    } catch (error) {
+      this.typingTickets.delete(chatId)
+      console.warn('[微信 Bridge] 获取 typing_ticket 失败（忽略）:', redactSensitiveLogValue(error))
+      return undefined
+    }
+  }
+
+  /** 断开前收尾：熄掉所有输入状态并丢弃 ticket（bot_token 变化后 ticket 失效） */
+  private clearTypingSessions(): void {
+    for (const chatId of [...this.typingSessions.keys()]) {
+      const ticket = this.takeTypingSession(chatId)
+      if (ticket) void this.hideTyping(chatId, ticket)
+    }
+    this.typingTickets.clear()
   }
 
   // ===== 同步游标持久化 =====

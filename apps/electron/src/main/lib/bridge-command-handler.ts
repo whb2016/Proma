@@ -78,7 +78,8 @@ export interface BridgeCommandHandlerConfig {
   /**
    * 收到消息后是否先回一条「⏳ Agent 处理中...」确认（默认 true）。
    *
-   * QQ 这类被动回复条数有硬配额的平台应设为 false —— 那条确认会占掉一次回复机会。
+   * 平台有原生「正在输入」状态时应设为 false，用状态替代这条文本 —— 微信、QQ 单聊
+   * 都是这么做的。QQ 还有另一层原因：被动回复条数是硬配额，这条确认会白占一次。
    */
   sendProcessingNotice?: boolean
 }
@@ -765,8 +766,7 @@ export class BridgeCommandHandler {
 
     // 即时确认：[workspace_name]->[session_title]: ⏳ Agent 处理中...
     //
-    // QQ 等对被动回复条数有硬配额的平台可以关掉这条：它会白白占掉一次回复机会，
-    // 而平台又没有"正在输入"这类状态可用来替代。
+    // 有原生「正在输入」状态的平台（微信、QQ 单聊）会关掉这条，由 Bridge 自己点灯。
     if (this.config.sendProcessingNotice !== false) {
       const workspace = binding.workspaceId ? getAgentWorkspace(binding.workspaceId) : undefined
       const session = getAgentSessionMeta(binding.sessionId)

@@ -153,11 +153,16 @@ export const contextLengthAtom = atomWithStorage<ContextLengthValue>(
 /** 并排模式 */
 export const parallelModeAtom = atom<boolean>(false)
 
-/** 思考模式（持久化到 localStorage） */
-export const thinkingEnabledAtom = atomWithStorage<boolean>(
-  'proma-thinking-enabled',
-  false,
-)
+/**
+ * 思考模式的默认值（新对话开箱即开，见 useConversationThinkingEnabled）
+ *
+ * fork 定制：改为默认开启，且不再走 localStorage。
+ * 自「分屏模式下 Header 控件状态隔离」之后，实际开关已经是每个对话独立的
+ * conversationThinkingEnabledAtom，没有任何地方再写这个 atom —— 它只剩「默认值」
+ * 一个作用。而更早的版本写过 `proma-thinking-enabled`，那些机器上残留的 false
+ * 会盖掉这里的默认值，所以直接用普通 atom，不读存储。
+ */
+export const thinkingEnabledAtom = atom<boolean>(true)
 
 /** 当前对话的上下文分隔线 */
 export const contextDividersAtom = atom<string[]>([])

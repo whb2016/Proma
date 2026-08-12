@@ -27,8 +27,7 @@ import { VersionHistory } from './VersionHistory'
 declare const __APP_VERSION__: string
 const APP_VERSION = __APP_VERSION__
 
-// fork 定制：更新卡片「去下载」的兜底地址，指向本 fork 的 Release（下方「项目地址」
-// 仍指向上游项目主页，保留出处）。
+// fork 定制：更新卡片「去下载」的兜底地址，指向本 fork 的 Release。
 const GITHUB_RELEASES_URL = 'https://github.com/whb2016/Proma/releases'
 
 /** 更新状态卡片 */
@@ -500,7 +499,7 @@ export function AboutSettings(): React.ReactElement {
         </SettingsRow>
         <SettingsRow
           label="开源协议"
-          description="社区版基于 AGPL-3.0 开源，商业授权请联系 erlichliu@gmail.com"
+          description="基于 AGPL-3.0 开源"
         >
           <a
             href="https://www.gnu.org/licenses/agpl-3.0.html"
@@ -511,14 +510,15 @@ export function AboutSettings(): React.ReactElement {
             AGPL-3.0
           </a>
         </SettingsRow>
+        {/* fork 定制：「项目地址」指向本 fork —— 用户装的就是这份代码。 */}
         <SettingsRow label="项目地址">
           <a
-            href="https://github.com/ErlichLiu/Proma.git"
+            href="https://github.com/whb2016/Proma"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-primary hover:underline"
           >
-            github.com/ErlichLiu/Proma
+            github.com/whb2016/Proma
           </a>
         </SettingsRow>
       </SettingsCard>

@@ -3,10 +3,12 @@ import type { Automation, AutomationNotificationTarget, AutomationRun } from '@p
 import {
   buildAutomationLocalNotification,
   buildAutomationTextNotification,
+  formatAutomationAttachmentTarget,
   formatFeishuChatLabel,
   formatPushTargetGroupLabel,
   formatQQChatLabel,
   formatWeChatChatLabel,
+  resolveAutomationAttachmentTarget,
   shouldNotifyAutomationTarget,
 } from './automation-notification-format'
 import { QQ_TEXT_CHUNK_SIZE, truncateForSingleMessage } from './qq-target'
@@ -202,5 +204,49 @@ describe('truncateForSingleMessage', () => {
     const out = truncateForSingleMessage('y'.repeat(QQ_TEXT_CHUNK_SIZE + 500))
     expect(out.length).toBe(QQ_TEXT_CHUNK_SIZE)
     expect(out).toContain('完整结果见 Proma')
+  })
+})
+
+describe('resolveAutomationAttachmentTarget', () => {
+  test('Given 微信或 QQ 目标 When 解析 Then 可交付附件', () => {
+    expect(resolveAutomationAttachmentTarget(automation({
+      notificationTargets: [target({ type: 'wechat' })],
+    }))?.type).toBe('wechat')
+    expect(resolveAutomationAttachmentTarget(automation({
+      notificationTargets: [target({ type: 'qq', botId: 'bot-1', chatId: 'c2c:ABC' })],
+    }))?.type).toBe('qq')
+  })
+
+  test('Given 飞书目标 When 解析 Then 不可交付（没有出站图片能力）', () => {
+    expect(resolveAutomationAttachmentTarget(automation({
+      notificationTargets: [target({ type: 'feishu' })],
+    }))).toBeUndefined()
+  })
+
+  test('Given 未配置或已关闭的目标 When 解析 Then 不可交付', () => {
+    expect(resolveAutomationAttachmentTarget(automation())).toBeUndefined()
+    expect(resolveAutomationAttachmentTarget(automation({ notificationTargets: [] }))).toBeUndefined()
+    expect(resolveAutomationAttachmentTarget(automation({
+      notificationTargets: [target({ enabled: false })],
+    }))).toBeUndefined()
+  })
+
+  test('Given trigger 只在失败时通知 When 解析 Then 仍可交付', () => {
+    // trigger 只管完成通知发不发，与 Agent 显式交付文件无关
+    expect(resolveAutomationAttachmentTarget(automation({
+      notificationTargets: [target({ trigger: 'error' })],
+    }))?.type).toBe('wechat')
+  })
+})
+
+describe('formatAutomationAttachmentTarget', () => {
+  test('Given 有 label 快照 When 生成展示名 Then 用快照', () => {
+    expect(formatAutomationAttachmentTarget(target({ label: 'QQ 宵宫 · 单聊 (13F882C6…)' })))
+      .toBe('QQ 宵宫 · 单聊 (13F882C6…)')
+  })
+
+  test('Given 旧数据没有 label When 生成展示名 Then 退回平台名', () => {
+    expect(formatAutomationAttachmentTarget(target({ type: 'qq' }))).toBe('QQ')
+    expect(formatAutomationAttachmentTarget(target({ type: 'wechat' }))).toBe('微信')
   })
 })

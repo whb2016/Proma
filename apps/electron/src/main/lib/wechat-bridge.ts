@@ -23,7 +23,8 @@ import { getWeChatBindingsPath, getWeChatContextTokensPath, getWeChatSyncPath } 
 import { BridgeCommandHandler, type BridgeAttachment, type BridgeChatBinding } from './bridge-command-handler'
 import { createJsonBridgeChatBindingStore } from './bridge-binding-store'
 import { inferImageMediaType, saveImageToSession, saveFileToSession, inferExtension, MAX_IMAGE_SIZE } from './bridge-attachment-utils'
-import { isImageAttachment, resolveOutboundAttachmentPath } from './bridge-outbound-attachment'
+import { isImageAttachment } from './bridge-outbound-attachment'
+import { resolveAgentOutboundAttachment } from './agent-outbound-attachment'
 import {
   decryptAesEcbWithKey,
   encodeAesKeyBase64,
@@ -33,8 +34,6 @@ import {
   parseAesKey,
 } from './wechat-media-crypto'
 import { getAgentWorkspace } from './agent-workspace-manager'
-import { collectAttachedDirectories } from './agent-orchestrator'
-import { getAgentSessionMeta } from './agent-session-manager'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { basename } from 'node:path'
 import * as crypto from 'node:crypto'
@@ -612,7 +611,7 @@ class WeChatBridge {
    * 文件不等于想发它），把本轮新建的文件全发出去则会带上临时产物。
    *
    * 安全边界：chatId 与 contextToken 由闭包绑定，模型无法指定发给谁；路径必须落在
-   * 本会话工作区内（见 resolveOutboundAttachmentPath），避免把本机任意文件发出去。
+   * Agent 自身的授权目录内（见 resolveAgentOutboundAttachment），避免把本机任意文件发出去。
    */
   private buildPiSendAttachmentTool(ctx: {
     chatId: string
@@ -646,18 +645,12 @@ class WeChatBridge {
 
         if (!this.client) return fail('微信未连接')
 
-        const workspace = getAgentWorkspace(ctx.workspaceId)
-        if (!workspace) return fail('工作区不存在')
-
-        // 与 Agent 自身的授权目录一致：会话工作台、会话/工作区附加目录、项目文件根。
-        // 用 getProjectFilesPath 单根会漏掉 Agent 的 cwd（会话工作台，附件就在那里），
-        // 逼模型先复制一份 —— 而上游提示词明确要求"不要先复制到当前工作目录"。
-        const roots = collectAttachedDirectories({
-          sessionMeta: getAgentSessionMeta(ctx.sessionId),
-          workspaceSlug: workspace.slug,
+        const resolved = resolveAgentOutboundAttachment({
+          sessionId: ctx.sessionId,
+          workspaceId: ctx.workspaceId,
+          path: rawPath,
+          maxSize: MAX_UPLOAD_SIZE,
         })
-
-        const resolved = resolveOutboundAttachmentPath(roots, rawPath, MAX_UPLOAD_SIZE)
         if (!resolved.ok) return fail(resolved.reason)
 
         const contextToken = (ctx.contextData as { contextToken?: string } | undefined)?.contextToken ?? ''
@@ -716,19 +709,47 @@ class WeChatBridge {
    *
    * iLink 的 sendmessage 必须带 context_token，而 token 只能从收到的消息里拿 ——
    * 所以这里用缓存的最近一次 token。官方没有说明 token 的有效期，因此它有可能已经
-   * 失效。
-   *
-   * 注意：iLink 的失败是 HTTP 200 + `ret != 0`，通用 post() 不检查这个字段，所以
-   * 必须在这里自己判 —— 否则推送失败会被当成成功，用户既收不到通知也看不到原因。
-   * 但**成功时响应里根本没有 ret**（实测），因此缺字段要算成功，不能按 `!== 0` 判。
+   * 失效。失败原因见 assertSendAccepted。
    */
   async sendTextToChat(chatId: string, text: string): Promise<void> {
     if (!this.client) throw new Error('微信未连接')
+    const contextToken = this.requireContextToken(chatId)
+    this.assertSendAccepted(await this.client.sendText(chatId, text, contextToken))
+  }
+
+  /**
+   * 主动发一个附件到指定聊天（定时任务交付产物）
+   *
+   * 与 {@link sendTextToChat} 同一套约束：靠缓存的 context_token，token 失效就抛。
+   */
+  async sendAttachmentToChat(
+    chatId: string,
+    data: Buffer,
+    fileName: string,
+    asImage: boolean,
+  ): Promise<void> {
+    if (!this.client) throw new Error('微信未连接')
+    const contextToken = this.requireContextToken(chatId)
+    this.assertSendAccepted(asImage
+      ? await this.client.sendImage(chatId, data, contextToken)
+      : await this.client.sendFile(chatId, data, fileName, contextToken))
+  }
+
+  /** 取该聊天缓存的 context_token；没有就说清怎么补 */
+  private requireContextToken(chatId: string): string {
     const contextToken = this.lastContextTokens.get(chatId)
     if (!contextToken) {
       throw new Error('没有可用的会话上下文（请先在微信里给 Bot 发一条消息）')
     }
-    const resp = await this.client.sendText(chatId, text, contextToken)
+    return contextToken
+  }
+
+  /**
+   * iLink 的失败是 HTTP 200 + `ret != 0`，通用 post() 不检查这个字段，所以必须
+   * 在这里自己判 —— 否则推送失败会被当成成功，用户既收不到东西也看不到原因。
+   * 但**成功时响应里根本没有 ret**（实测），因此缺字段要算成功，不能按 `!== 0` 判。
+   */
+  private assertSendAccepted(resp: SendMessageResponse): void {
     if (typeof resp.ret === 'number' && resp.ret !== 0) {
       const detail = resp.errmsg ? `: ${resp.errmsg}` : ''
       throw new Error(`微信拒绝了推送（ret=${resp.ret}${detail}），会话上下文可能已过期`)

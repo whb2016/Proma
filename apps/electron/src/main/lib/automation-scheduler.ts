@@ -9,6 +9,8 @@
  *       避免运行刚开始就触发 SDK 自动压缩。
  *     · reuse：始终复用同一个子会话（用户主动选择，长期 token 成本由用户承担）
  * - 强制 bypassPermissions，否则无人值守时写操作会因权限弹窗永久阻塞
+ * - 配了支持附件的远程渠道时注入交付工具（见 automation-attachment-tool.ts），
+ *   没配则在提示词里明确禁止 Agent 声称「已把文件发给用户」
  * - 来源会话/目标会话忙时跳过本轮，不排队堆积
  * - 连续失败达上限自动暂停
  * - 启动时恢复：已过期的 nextRunAt 顺延到下一个完整间隔，避免重启雪崩触发
@@ -35,6 +37,14 @@ import { createAgentSession, updateAgentSessionMeta, getAgentSessionMeta } from 
 import { getSessionContextUsageRatio } from './agent-session-usage'
 import { runAgentHeadless, isAgentSessionActive } from './agent-service'
 import { notifyAutomationRunFinished } from './automation-notification-service'
+import {
+  AUTOMATION_SEND_ATTACHMENT_TOOL,
+  buildAutomationCustomTools,
+} from './automation-attachment-tool'
+import {
+  formatAutomationAttachmentTarget,
+  resolveAutomationAttachmentTarget,
+} from './automation-notification-format'
 
 /** tick 周期：每 30s 检查一次到期任务（短轮询，抗休眠漂移） */
 const TICK_INTERVAL_MS = 30_000
@@ -82,6 +92,21 @@ function formatScheduleLabel(a: Automation): string {
   if (min < 60) return `每 ${min} 分钟`
   if (min < 1440) return `每 ${min / 60} 小时`
   return `每 ${min / 1440} 天`
+}
+
+/**
+ * 「产物怎么交给用户」的提示词段落
+ *
+ * 无人值守运行里，Agent 读一个文件只是让它自己看到内容，用户什么也收不到 —— 而
+ * 模型很容易把两者混为一谈（实测有过「已发给你如上图」这种编造）。所以两种情况
+ * 都要明写：有渠道时指名工具，没渠道时直接禁止声称已发送。
+ */
+function buildDeliveryGuidance(automation: Automation): string {
+  const target = resolveAutomationAttachmentTarget(automation)
+  if (target) {
+    return `产物交付：可以用 ${AUTOMATION_SEND_ATTACHMENT_TOOL} 把图片或文件发给${formatAutomationAttachmentTarget(target)}，这是本次运行唯一的外发通道。只有调用过该工具才算发给了用户 —— 读取文件只是让你自己看到内容。`
+  }
+  return '产物交付：本次运行**没有**把文件或图片发给用户的通道（未配置支持附件的远程推送渠道）。即使任务提示词要求「发给用户」，也不要声称你已经发送 —— 把产物的绝对路径写在回复里，用户会在 Proma 会话里查看。'
 }
 
 let tickTimer: NodeJS.Timeout | undefined
@@ -162,6 +187,9 @@ export async function runAutomation(automation: Automation, manual = false): Pro
     }
 
 
+    // 附件交付工具按本轮的推送目标现算，闭包内绑定收件人
+    const piCustomTools = buildAutomationCustomTools({ automation, sessionId: targetSessionId })
+
     await new Promise<void>((resolveRun) => {
       let settled = false
       const finish = (status: 'success' | 'error', error?: string): void => {
@@ -204,7 +232,7 @@ export async function runAutomation(automation: Automation, manual = false): Pro
         {
           sessionId: targetSessionId,
           userMessage: automation.prompt + '\n<!--PROMA_SCHEDULED_RUN-->',
-          automationContext: `这是 Proma 定时任务「${automation.name}」的自动执行（ID: ${automation.id}，${formatScheduleLabel(automation)}）。这本身就是定时任务，不要建议用户再创建定时任务。直接执行任务即可。如发现本任务连续失败、输出价值低、频率不合适或提示词不完整，可以使用 automation 工具读取并更新当前任务。`,
+          automationContext: `这是 Proma 定时任务「${automation.name}」的自动执行（ID: ${automation.id}，${formatScheduleLabel(automation)}）。这本身就是定时任务，不要建议用户再创建定时任务。直接执行任务即可。如发现本任务连续失败、输出价值低、频率不合适或提示词不完整，可以使用 automation 工具读取并更新当前任务。\n\n${buildDeliveryGuidance(automation)}`,
           channelId: automation.channelId,
           modelId: automation.modelId,
           workspaceId: automation.workspaceId,
@@ -218,6 +246,7 @@ export async function runAutomation(automation: Automation, manual = false): Pro
           onComplete: () => finish('success'),
           onTitleUpdated: () => { /* 子会话标题不需要特殊处理 */ },
         },
+        piCustomTools.length ? { piCustomTools } : undefined,
       ).catch((err) => {
         finish('error', err instanceof Error ? err.message : '未知错误')
       })

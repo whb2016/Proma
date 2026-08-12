@@ -33,15 +33,14 @@ import {
 import { getDecryptedBotAppSecret, updateQQBotDefaultWorkspace } from './qq-config'
 import { getQQBotBindingsPath } from './config-paths'
 import { createJsonBridgeChatBindingStore } from './bridge-binding-store'
-import { isImageAttachment, resolveOutboundAttachmentPath } from './bridge-outbound-attachment'
+import { isImageAttachment } from './bridge-outbound-attachment'
+import { resolveAgentOutboundAttachment } from './agent-outbound-attachment'
 import {
   MAX_IMAGE_SIZE,
   inferImageMediaType,
   saveFileToSession,
   saveImageToSession,
 } from './bridge-attachment-utils'
-import { collectAttachedDirectories } from './agent-orchestrator'
-import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { redactSensitiveLogValue } from './bridge-log-redaction'
 import { readFileSync } from 'node:fs'
@@ -127,6 +126,20 @@ export class QQBridge {
       throw new Error(`QQ Bot "${this.botConfig.name}" 未连接`)
     }
     await this.api.sendMarkdown(target.kind, target.openid, truncateForSingleMessage(text))
+  }
+
+  /**
+   * 主动发一个附件到指定聊天（定时任务交付产物）
+   *
+   * 同样不带 msg_id，是主动消息 —— 约束与 {@link sendTextToChat} 一致。
+   */
+  async sendAttachmentToChat(chatId: string, data: Buffer, asImage: boolean): Promise<void> {
+    const target = decodeQQChatId(chatId)
+    if (!target) throw new Error(`非法的 QQ 会话标识: ${chatId}`)
+    if (!this.api || this.state.status !== 'connected') {
+      throw new Error(`QQ Bot "${this.botConfig.name}" 未连接`)
+    }
+    await this.api.sendMedia(target.kind, target.openid, data, asImage)
   }
 
   private get logPrefix(): string {
@@ -392,14 +405,12 @@ export class QQBridge {
         if (!this.api || !target) return fail('QQ 未连接')
         if (!msgId) return fail('没有可回复的消息（QQ 只允许被动回复）')
 
-        const workspace = getAgentWorkspace(ctx.workspaceId)
-        if (!workspace) return fail('工作区不存在')
-
-        const roots = collectAttachedDirectories({
-          sessionMeta: getAgentSessionMeta(ctx.sessionId),
-          workspaceSlug: workspace.slug,
+        const resolved = resolveAgentOutboundAttachment({
+          sessionId: ctx.sessionId,
+          workspaceId: ctx.workspaceId,
+          path: rawPath,
+          maxSize: MAX_UPLOAD_SIZE,
         })
-        const resolved = resolveOutboundAttachmentPath(roots, rawPath, MAX_UPLOAD_SIZE)
         if (!resolved.ok) return fail(resolved.reason)
 
         const fileName = basename(resolved.absolutePath)

@@ -89,16 +89,20 @@ export class QQApiClient {
   /**
    * 上传富媒体并发送
    *
-   * `srv_send_msg: false` 表示只上传、不由服务端直接发出，这样我们才能自己带上
-   * msg_id / msg_seq 走被动回复。
+   * `srv_send_msg: false` 表示只上传、不由服务端直接发出，这样我们才能自己决定
+   * 带不带 msg_id / msg_seq。
+   *
+   * @param msgId 收到的消息 id。**省略即主动消息**，与 {@link sendMarkdown} 同一套
+   *   规则（定时任务发产物图片走这条路，跑完时早已不在被动回复窗口内）。
+   * @param msgSeq 同一 msgId 的第几次回复；主动消息不需要
    */
   async sendMedia(
     kind: QQTargetKind,
     openid: string,
     data: Buffer,
     isImage: boolean,
-    msgId: string,
-    msgSeq: number,
+    msgId?: string,
+    msgSeq?: number,
   ): Promise<QQSendMessageResult> {
     const uploaded = await this.request<QQUploadResult>(
       'POST',
@@ -117,8 +121,7 @@ export class QQApiClient {
       content: '',
       msg_type: QQ_MSG_TYPE.MEDIA,
       media: { file_info: uploaded.file_info },
-      msg_id: msgId,
-      msg_seq: msgSeq,
+      ...(msgId ? { msg_id: msgId, msg_seq: msgSeq } : {}),
     })
   }
 

@@ -134,6 +134,13 @@ class QQBridgeManager {
     await bridge.sendTextToChat(chatId, text)
   }
 
+  /** 主动发附件到指定聊天（定时任务交付产物）；Bot 未运行时抛错 */
+  async sendAttachmentToChat(botId: string, chatId: string, data: Buffer, asImage: boolean): Promise<void> {
+    const bridge = this.bridges.get(botId)
+    if (!bridge) throw new Error(`QQ Bot 未运行: ${botId}`)
+    await bridge.sendAttachmentToChat(chatId, data, asImage)
+  }
+
   /**
    * 清理已删除项目的聊天绑定
    *

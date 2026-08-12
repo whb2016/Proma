@@ -1,5 +1,8 @@
 /**
- * 定时任务通知的纯格式化逻辑。
+ * 定时任务通知的纯逻辑：文案格式化与渠道能力判断。
+ *
+ * 与 automation-notification-service.ts / automation-attachment-tool.ts 分开是为了
+ * 能脱离 electron 直接单测。
  */
 
 import type {
@@ -169,4 +172,37 @@ export function formatQQChatLabel(chatId: string): string {
   const openid = sep > 0 ? chatId.slice(sep + 1) : chatId
   const kindLabel = kind === 'group' ? '群' : kind === 'c2c' ? '单聊' : '会话'
   return `${kindLabel} (${shortId(openid)})`
+}
+
+// ===== 附件交付能力 =====
+
+/**
+ * 各渠道能否交付附件，以及单文件上限（字节）
+ *
+ * 上限与该平台 Bridge 自己的 send_attachment 工具保持一致。**飞书不在表里**：代码里
+ * 没有飞书出站图片/文件的能力（feishu-bridge.ts 只有 sendTextMessage / sendCard，
+ * image_key / file_key 全是入站下载路径），它在普通 IM 会话里同样发不了附件。要支持
+ * 得先接 im.v1.image.create 上传。
+ */
+export const AUTOMATION_ATTACHMENT_MAX_SIZE: Partial<Record<AutomationNotificationChannel, number>> = {
+  wechat: 20 * 1024 * 1024,
+  qq: 10 * 1024 * 1024,
+}
+
+/**
+ * 本轮运行可用于交付附件的推送目标
+ *
+ * 取第一个 enabled 的目标：`trigger` 只决定完成通知发不发，与 Agent 显式交付文件无关。
+ */
+export function resolveAutomationAttachmentTarget(
+  automation: Pick<Automation, 'notificationTargets'>,
+): AutomationNotificationTarget | undefined {
+  const target = (automation.notificationTargets ?? []).find((item) => item.enabled)
+  if (!target) return undefined
+  return AUTOMATION_ATTACHMENT_MAX_SIZE[target.type] ? target : undefined
+}
+
+/** 目标聊天的展示名，用于工具描述与提示词。没有 label 快照时退回平台名 */
+export function formatAutomationAttachmentTarget(target: AutomationNotificationTarget): string {
+  return target.label || AUTOMATION_CHANNEL_LABELS[target.type] || target.type
 }

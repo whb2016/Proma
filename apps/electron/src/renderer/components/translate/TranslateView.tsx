@@ -63,6 +63,20 @@ const EXCLUDED_PROVIDERS = ['openai-codex', 'xai'] as const
  */
 const TRANSLATION_REMARK_PLUGINS: RemarkPluginFn[] = [remarkPreserveBreaks]
 
+/**
+ * 译文排版必须自己给一套，不能吃 MessageResponse 的默认值。
+ *
+ * 默认值是为 Chat 的紧凑气泡调的（`prose-p:my-1.5` = 6px）：单换行走 <br>，
+ * 行间距就是行高 24px；空行走新段落，只多出 6px 合并边距 —— 在 24px 的行距上
+ * 肉眼看不出差别，于是「原文两个换行」被显示成「一个换行」。
+ *
+ * 这里把段间距设成整整一行（1.7em），并把行高对齐左侧 textarea 的 leading-[1.7]，
+ * 空行才真的显示成空行、左右两栏的行也才对得上。
+ * 段落边距足够大后，标题与列表的边距会被合并规则吞掉，不用单独再调。
+ */
+const TRANSLATION_PROSE_CLASS =
+  'prose-p:my-[1.7em] prose-p:leading-[1.7] prose-li:leading-[1.7]'
+
 export function TranslateView(): React.ReactElement {
   const [targetLanguage, setTargetLanguage] = useAtom(translationTargetLanguageAtom)
   const [translationModel, setTranslationModel] = useAtom(translationModelAtom)
@@ -232,7 +246,12 @@ export function TranslateView(): React.ReactElement {
             {streaming && !output ? (
               <LoadingIndicator label="正在翻译" showElapsed />
             ) : output ? (
-              <MessageResponse remarkPlugins={TRANSLATION_REMARK_PLUGINS}>{output}</MessageResponse>
+              <MessageResponse
+                className={TRANSLATION_PROSE_CLASS}
+                remarkPlugins={TRANSLATION_REMARK_PLUGINS}
+              >
+                {output}
+              </MessageResponse>
             ) : !error ? (
               <p className="text-sm text-muted-foreground/60">译文会显示在这里。</p>
             ) : null}

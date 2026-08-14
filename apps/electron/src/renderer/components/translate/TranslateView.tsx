@@ -21,7 +21,8 @@ import {
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { LoadingIndicator } from '@/components/ui/loading-indicator'
-import { MessageResponse } from '@/components/ai-elements/message'
+import { MessageResponse, remarkPreserveBreaks } from '@/components/ai-elements/message'
+import type { RemarkPluginFn } from '@/components/ai-elements/message'
 import { CopyButton } from '@/components/chat/CopyButton'
 import { ModelSelector, buildModelOptions } from '@/components/chat/ModelSelector'
 import { channelsAtom, selectedModelAtom } from '@/atoms/chat-atoms'
@@ -48,6 +49,19 @@ import { TranslateSettingsDialog } from './TranslateSettingsDialog'
 
 /** 订阅制 OAuth 渠道走 Pi 专用传输层，这套 provider 适配器接不上（与 Chat 同源限制）。 */
 const EXCLUDED_PROVIDERS = ['openai-codex', 'xai'] as const
+
+/**
+ * 译文渲染必须带 remarkPreserveBreaks。
+ *
+ * Markdown 规范里**单个换行不算换行**，会被合并进同一段落 —— 模型按原文输出了 `\n`，
+ * 但 MessageResponse 的默认插件集（remarkGfm + remarkMath）会把它吃掉，
+ * 表现为「原文分了行、译文糊成一大段」，且换任何模型都一样。
+ * 只有模型恰好多打一个空行时那一处才会断开，所以现象看着像模型时好时坏。
+ *
+ * 翻译的输入是手输/粘贴的纯文本，与用户消息同类，所以复用用户消息那条插件
+ * （见 message.tsx 的 USER_REMARK_PLUGINS），它会跳过代码块，不影响围栏内的原样输出。
+ */
+const TRANSLATION_REMARK_PLUGINS: RemarkPluginFn[] = [remarkPreserveBreaks]
 
 export function TranslateView(): React.ReactElement {
   const [targetLanguage, setTargetLanguage] = useAtom(translationTargetLanguageAtom)
@@ -218,7 +232,7 @@ export function TranslateView(): React.ReactElement {
             {streaming && !output ? (
               <LoadingIndicator label="正在翻译" showElapsed />
             ) : output ? (
-              <MessageResponse>{output}</MessageResponse>
+              <MessageResponse remarkPlugins={TRANSLATION_REMARK_PLUGINS}>{output}</MessageResponse>
             ) : !error ? (
               <p className="text-sm text-muted-foreground/60">译文会显示在这里。</p>
             ) : null}

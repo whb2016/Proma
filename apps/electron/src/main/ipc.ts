@@ -5367,8 +5367,9 @@ export function registerIpcHandlers(): void {
     if ((effective.activeWindowStart === undefined) !== (effective.activeWindowEnd === undefined)) {
       throw new Error('activeWindowStart 与 activeWindowEnd 必须同时设置或同时清除')
     }
-    if (effective.activeWeekdays !== undefined && effective.activeWeekdays.length > 0 && effective.scheduleType !== 'interval') {
-      throw new Error('周内运行日限制仅支持 scheduleType=interval')
+    if (effective.activeWeekdays !== undefined && effective.activeWeekdays.length > 0
+      && effective.scheduleType !== 'interval' && effective.scheduleType !== 'daily') {
+      throw new Error('周内运行日限制仅支持 scheduleType=interval/daily')
     }
     if (effective.activeWindowStart !== undefined && effective.activeWindowEnd !== undefined) {
       if (effective.scheduleType !== 'interval') throw new Error('每日执行窗口仅支持 scheduleType=interval')

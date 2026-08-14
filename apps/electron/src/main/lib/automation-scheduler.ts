@@ -91,7 +91,13 @@ function formatScheduleLabel(a: Automation): string {
       : '指定时间'
     return `仅运行一次（${when}）`
   }
-  if (a.scheduleType === 'daily') return `每天 ${a.timeOfDay ?? '09:00'}`
+  if (a.scheduleType === 'daily') {
+    const time = a.timeOfDay ?? '09:00'
+    // 有运行日限制时说「工作日 22:30」而不是「每天 22:30」，否则标签会骗人
+    return a.activeWeekdays && a.activeWeekdays.length > 0
+      ? `${formatWeekdays(a.activeWeekdays)} ${time}`
+      : `每天 ${time}`
+  }
   if (a.scheduleType === 'weekly') {
     const names = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
     return `每${names[a.dayOfWeek ?? 1]} ${a.timeOfDay ?? '09:00'}`

@@ -155,6 +155,7 @@ function writeIndex(index: AutomationsIndex): void {
  * - weekly：本周/下周 dayOfWeek 的 timeOfDay
  * - once：直接返回固定的 scheduledAt（不做任何前进推算），跑完后由 appendRun 自动停用
  * - interval 叠加 activeWindowStart/activeWindowEnd 时，仅在每日窗口内运行；窗口外自动跳至下一天窗口开始
+ * - interval 与 daily 都支持 activeWeekdays（周内运行日），空数组/缺省表示每天
  *
  * 返回值保证为有限正整数。输入非法时回退到 from + 10min 并打印警告。
  */
@@ -165,6 +166,19 @@ export function computeNextRunAt(
   from: number = Date.now(),
 ): number {
   const FALLBACK_INTERVAL_MS = 10 * 60_000
+
+  // 周内运行日：interval 与 daily 共用。空数组或缺省表示不限制。
+  const weekdays = [...new Set((a.activeWeekdays ?? []).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
+  const isAllowedDay = (date: Date): boolean => weekdays.length === 0 || weekdays.includes(date.getDay())
+  /** 从 date 起找第一个允许的日期（date 本身允许就原样返回）；时刻不变 */
+  const nextAllowedDay = (date: Date): Date => {
+    const next = new Date(date)
+    for (let i = 0; i < 7; i++) {
+      if (i > 0) next.setDate(next.getDate() + 1)
+      if (isAllowedDay(next)) return next
+    }
+    return next
+  }
 
   let result: number
 
@@ -193,16 +207,6 @@ export function computeNextRunAt(
       const start = parseWindowTime(a.activeWindowStart)
       const end = parseWindowTime(a.activeWindowEnd)
       const hasWindow = !!start && !!end && start[0] * 60 + start[1] < end[0] * 60 + end[1]
-      const weekdays = [...new Set((a.activeWeekdays ?? []).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
-      const isAllowedDay = (date: Date): boolean => weekdays.length === 0 || weekdays.includes(date.getDay())
-      const nextAllowedDay = (date: Date): Date => {
-        const next = new Date(date)
-        for (let i = 0; i < 7; i++) {
-          if (i > 0) next.setDate(next.getDate() + 1)
-          if (isAllowedDay(next)) return next
-        }
-        return next
-      }
 
       if (hasWindow) {
         const windowStart = new Date(from)
@@ -259,7 +263,11 @@ export function computeNextRunAt(
 
     if (a.scheduleType === 'daily') {
       if (next.getTime() <= from) next.setDate(next.getDate() + 1)
-      result = next.getTime()
+      // 周内运行日限制：把日期推到下一个允许的星期，时刻不变。
+      // 跨夏令时的日期加减可能带走小时数，所以推完再显式设回 hh:mm。
+      const allowed = nextAllowedDay(next)
+      allowed.setHours(hh, mm, 0, 0)
+      result = allowed.getTime()
     } else if (a.scheduleType === 'monthly') {
       const daysInMonth = (y: number, m: number) => new Date(y, m + 1, 0).getDate()
       const targetDom = Number.isFinite(a.dayOfMonth) && a.dayOfMonth! >= 1 && a.dayOfMonth! <= 31
@@ -362,9 +370,13 @@ type AutomationScheduleFields = Omit<
 export function normalizeAutomationScheduleFields(
   target: Pick<Automation, 'scheduleType' | 'activeWindowStart' | 'activeWindowEnd' | 'activeWeekdays' | 'timeOfDay' | 'dayOfWeek' | 'dayOfMonth' | 'scheduledAt'>,
 ): void {
+  // 每日时间窗口只对 interval 有意义（daily 本身就是一个固定时刻）
   if (target.scheduleType !== 'interval') {
     target.activeWindowStart = undefined
     target.activeWindowEnd = undefined
+  }
+  // 周内运行日 interval 与 daily 都支持
+  if (target.scheduleType !== 'interval' && target.scheduleType !== 'daily') {
     target.activeWeekdays = undefined
   }
   if (target.scheduleType !== 'daily' && target.scheduleType !== 'weekly' && target.scheduleType !== 'monthly') {
@@ -389,10 +401,12 @@ export function validateExplicitAutomationScheduleFields(
 
   // intervalMinutes 是所有 Automation 持久化记录及 CreateAutomationInput 的必填兼容字段；
   // 非 interval 模式会保留它作为闲置值，不能在此按模式拒绝。
-  if (scheduleType !== 'interval') {
+  if (scheduleType !== 'interval' && scheduleType !== 'daily') {
     if (input.activeWeekdays !== undefined && input.activeWeekdays !== null) {
-      throw new Error('周内运行日限制仅支持 scheduleType=interval')
+      throw new Error('周内运行日限制仅支持 scheduleType=interval/daily')
     }
+  }
+  if (scheduleType !== 'interval') {
     if (hasValue(input.activeWindowStart) || hasValue(input.activeWindowEnd)) {
       throw new Error('每日执行窗口仅支持 scheduleType=interval')
     }

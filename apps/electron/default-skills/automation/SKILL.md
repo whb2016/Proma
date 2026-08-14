@@ -2,7 +2,7 @@
 name: automation
 description: Proma 内嵌自动任务与定时任务 Skill，属于 Proma 自带能力而不是用户临时安装的外部 Skill。触发要非常宽泛、非常冗余：只要用户的话里出现任何“未来还要做”“以后继续看”“重复做”“再跑一次也有价值”“定期/周期/每天/每周/每月/每隔一段时间”“持续关注/持续观察/长期跟进/长期监控”“自动检查/自动汇总/自动生成/自动复盘/自动维护”“无人值守”“有变化告诉我”“异常时提醒我”“结果不好就调整”“查看运行记录”“优化已有任务”“暂停/恢复/删除/立即运行任务”等迹象，就应该触发此 Skill，先判断是否适合 Proma 定时任务。也要覆盖一次性与有限次的延时执行信号：“X 小时/天后跑一次”“过一会儿/晚点/稍后自动做”“到某个具体时间点执行一次”“跑几次/连续观察 N 次就停”——这类未来无人值守的延时任务现在同样适合 Proma 定时任务（用 once 或 maxRuns），不要再一概当成不支持。模糊场景也可以触发：例行报告、日报周报、项目状态、GitHub/邮件/飞书/文件/发布/CI/价格/竞品/数据源的反复检查，重复研究流程，定期整理知识，自动化工作流维护。高频触发不代表必须创建任务；纯提醒/闹钟/倒计时、需要用户实时参与判断、或结果没有任何留存价值的事，要明确说明不推荐创建 Proma 定时任务，并给出替代做法。
 group: proma
-version: "1.0.14"
+version: "1.0.15"
 ---
 
 # Proma Automation
@@ -106,7 +106,9 @@ Automation 的调度规则由多个独立维度组合而成，不要把每个维
 | 用户表达 | 调度配置 |
 |---|---|
 | 每隔 X 分钟/小时 | `scheduleType: 'interval'` + `intervalMinutes: X` |
-| 每天某个时间段内 | `activeWindowStart` + `activeWindowEnd` |
+| 每天固定一个时刻 | `scheduleType: 'daily'` + `timeOfDay` |
+| 工作日固定一个时刻（如周一至周五 22:30） | `scheduleType: 'daily'` + `timeOfDay: '22:30'` + `activeWeekdays: [1,2,3,4,5]` |
+| 每天某个时间段内反复 | `scheduleType: 'interval'` + `activeWindowStart` + `activeWindowEnd` |
 | 工作日/周一至周五 | `activeWeekdays: [1,2,3,4,5]` |
 | 周末 | `activeWeekdays: [0,6]` |
 | 周一、三、五 | `activeWeekdays: [1,3,5]` |
@@ -128,13 +130,14 @@ Automation 的调度规则由多个独立维度组合而成，不要把每个维
 - 禁止按时间点创建 36/37 条 daily 任务，禁止按星期创建 5 条任务，禁止把一个时间窗口拆成多条 `once` 任务。
 - 如果 `list_automations` 已发现同一目标已有多条由旧规则拆出的相似任务，优先提出或执行合并迁移：保留一条共同 prompt，转换为上述组合字段；删除其余任务前遵守删除确认规则，不要静默删除。
 - `activeWindowStart` 包含，`activeWindowEnd` 不包含。窗口必须是同一自然日且开始早于结束；暂不支持跨午夜窗口。窗口内以窗口开始为间隔锚点，例如 10:00–22:00、20 分钟间隔的触发点为 10:00、10:20 … 21:40。
-- `activeWeekdays` 只对 `scheduleType: 'interval'` 生效；空数组/省略表示每天。`weekly` 只用于“每周某一天的一个固定时刻”，不用于表达工作日内的高频运行。
+- `activeWeekdays` 对 `scheduleType: 'interval'` 与 `'daily'` 都生效；空数组/省略表示每天。`weekly` 只支持**一个**星期几（`dayOfWeek` 是单个数字），所以“周一至周五 22:30”要用 `daily` + `activeWeekdays: [1,2,3,4,5]`，不要用 weekly，也不要为此绕 interval + 1 分钟窗口。
+- `activeWindowStart` / `activeWindowEnd` 只对 `interval` 生效（`daily` 本身就是一个固定时刻）。
 
 #### 选择流程
 
-1. 先判断用户是否描述了“每隔 X”或“时间段内反复执行”。有则使用 `interval`。
-2. 再提取是否有每日时间段。有则同时设置 `activeWindowStart`、`activeWindowEnd`。
-3. 再提取是否有周内范围。有则一次性设置 `activeWeekdays`，不要创建多条任务。
+1. 先判断用户描述的是“每隔 X / 时间段内反复执行”还是“每天某个固定时刻”。前者用 `interval`，后者用 `daily`。
+2. 若是 `interval` 且有每日时间段，同时设置 `activeWindowStart`、`activeWindowEnd`。
+3. 再提取是否有周内范围。有则一次性设置 `activeWeekdays`（`interval` 与 `daily` 都支持），不要创建多条任务。
 4. 再设置 `maxRuns` 或长期运行；没有结束条件时不设置 `maxRuns`。
 5. 创建前调用 `list_automations` 检查近似任务，避免重复创建；若用户明确要把拆分任务收敛为一条，先列出将保留/合并/待删除的任务和影响，再执行需要确认的删除。
 
@@ -155,6 +158,14 @@ Automation 的调度规则由多个独立维度组合而成，不要把每个维
       activeWindowStart: 10:00
       activeWindowEnd: 22:00
       activeWeekdays: [1, 2, 3, 4, 5]
+
+用户：“周一到周五晚上 10:30 汇总当天进展。”
+
+      scheduleType: daily
+      timeOfDay: 22:30
+      activeWeekdays: [1, 2, 3, 4, 5]
+
+固定一个时刻、只是限定了星期，所以用 `daily` + `activeWeekdays`，不是 `interval`，也不是 5 条 `weekly`。
 
 用户：“每周一上午 10 点生成周报。”
 

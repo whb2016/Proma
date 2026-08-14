@@ -25,9 +25,10 @@ export interface AutomationRun {
 export type AutomationScheduleType = 'interval' | 'daily' | 'weekly' | 'monthly' | 'once'
 
 /**
- * interval 调度的每日有效执行窗口和周内运行日。
- * - 开始包含、结束不包含；例如 10:00–22:00 每 20 分钟会在 10:00 至 21:40 触发。
+ * 每日有效执行窗口（仅 interval）和周内运行日（interval 与 daily 都支持）。
+ * - 窗口开始包含、结束不包含；例如 10:00–22:00 每 20 分钟会在 10:00 至 21:40 触发。
  * - activeWeekdays 为空或未设置表示每天；非空时 0=周日，1=周一 … 6=周六。
+ *   daily 配上 activeWeekdays 就是「周一至周五 22:30」这类固定时刻的工作日任务。
  * - 窗口与运行日可以单独使用，但实际产品通常组合为“工作日 10:00–22:00 每 20 分钟”。
  */
 export interface AutomationActiveWindow {
@@ -126,7 +127,7 @@ export interface Automation extends AutomationActiveWindow {
   activeWindowStart?: string
   /** interval 的每日有效结束时刻 "HH:MM"（结束不包含） */
   activeWindowEnd?: string
-  /** interval 的运行日；为空表示每天，0=周日，1=周一 … 6=周六 */
+  /** interval 与 daily 的运行日；为空表示每天，0=周日，1=周一 … 6=周六 */
   activeWeekdays?: number[]
   /** 触发时刻 "HH:MM"，scheduleType==='daily'|'weekly'|'monthly' 时使用 */
   timeOfDay?: string
@@ -221,7 +222,7 @@ export interface UpdateAutomationInput {
   activeWindowStart?: string | null
   /** null 表示清除每日执行窗口 */
   activeWindowEnd?: string | null
-  /** interval 的运行日；传空数组表示每天，null 表示清除限制 */
+  /** interval 与 daily 的运行日；传空数组表示每天，null 表示清除限制 */
   activeWeekdays?: number[] | null
   timeOfDay?: string
   dayOfWeek?: number

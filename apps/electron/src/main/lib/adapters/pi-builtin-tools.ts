@@ -392,7 +392,7 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
         intervalMinutes: Type.Optional(Type.Number({ description: '固定间隔分钟数；scheduleType=interval 时必填' })),
         activeWindowStart: Type.Optional(Type.String({ description: 'interval 的每日有效开始时刻，HH:MM；需与 activeWindowEnd 同时设置' })),
         activeWindowEnd: Type.Optional(Type.String({ description: 'interval 的每日有效结束时刻（不包含），HH:MM；需与 activeWindowStart 同时设置' })),
-        activeWeekdays: Type.Optional(Type.Array(Type.Number({ description: '运行日：0=周日，1=周一 … 6=周六；空数组表示每天' }), { description: 'interval 的周内运行日集合，例如工作日传 [1,2,3,4,5]' })),
+        activeWeekdays: Type.Optional(Type.Array(Type.Number({ description: '运行日：0=周日，1=周一 … 6=周六；空数组表示每天' }), { description: 'interval 与 daily 的周内运行日集合，例如工作日传 [1,2,3,4,5]。daily 配上它就是「周一至周五某个固定时刻」' })),
         timeOfDay: Type.Optional(Type.String({ description: '每天/每周/每月触发时间，24 小时制 HH:MM' })),
         dayOfWeek: Type.Optional(Type.Number({ description: '每周触发日，0=周日，...，6=周六' })),
         dayOfMonth: Type.Optional(Type.Number({ description: '每月触发日，1-31' })),
@@ -439,8 +439,8 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
         if ((input.activeWindowStart === undefined) !== (input.activeWindowEnd === undefined)) {
           throw new Error('activeWindowStart 与 activeWindowEnd 必须同时设置')
         }
-        if (input.activeWeekdays && input.activeWeekdays.length > 0 && input.scheduleType !== 'interval') {
-          throw new Error('周内运行日限制仅支持 interval')
+        if (input.activeWeekdays && input.activeWeekdays.length > 0 && input.scheduleType !== 'interval' && input.scheduleType !== 'daily') {
+          throw new Error('周内运行日限制仅支持 interval 与 daily')
         }
         if (input.activeWindowStart && input.activeWindowEnd) {
           if (input.scheduleType !== 'interval' || input.activeWindowStart >= input.activeWindowEnd) {
@@ -531,8 +531,8 @@ function buildAutomationTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefin
         if ((effective.activeWindowStart === undefined) !== (effective.activeWindowEnd === undefined)) {
           throw new Error('activeWindowStart 与 activeWindowEnd 必须同时设置或同时清除')
         }
-        if (effective.activeWeekdays && effective.activeWeekdays.length > 0 && effective.scheduleType !== 'interval') {
-          throw new Error('周内运行日限制仅支持 interval')
+        if (effective.activeWeekdays && effective.activeWeekdays.length > 0 && effective.scheduleType !== 'interval' && effective.scheduleType !== 'daily') {
+          throw new Error('周内运行日限制仅支持 interval 与 daily')
         }
         if (effective.activeWindowStart && effective.activeWindowEnd && (effective.scheduleType !== 'interval' || effective.activeWindowStart >= effective.activeWindowEnd)) {
           throw new Error('每日执行窗口仅支持 interval，且开始时间必须早于结束时间')

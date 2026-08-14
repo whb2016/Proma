@@ -6,6 +6,7 @@
  * 展开规则与主进程 computeNextRunAt 保持一致：
  * - interval 从 nextRunAt 等距累加（锚点语义）；如配置每日窗口，则跳过窗口外时段并于下一窗口开始重置
  * - daily / weekly / monthly 用本地日历推进，保留 timeOfDay 的 hh:mm（DST 安全）
+ * - interval 与 daily 都尊重 activeWeekdays（周内运行日）
  * - monthly 短月钳制（先回 1 号再进月，setDate(min(dayOfMonth, 当月天数))）
  */
 
@@ -65,6 +66,18 @@ function* iterateOccurrences(
   let produced = 0
   let iterations = 0
 
+  // 周内运行日：interval 与 daily 共用，与主进程 computeNextRunAt 的判断保持一致
+  const weekdays = [...new Set((automation.activeWeekdays ?? []).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
+  const isAllowedDay = (date: Date): boolean => weekdays.length === 0 || weekdays.includes(date.getDay())
+  const nextAllowedDay = (date: Date): Date => {
+    const next = new Date(date)
+    for (let i = 0; i < 7; i++) {
+      if (i > 0) next.setDate(next.getDate() + 1)
+      if (isAllowedDay(next)) return next
+    }
+    return next
+  }
+
   if (automation.scheduleType === 'once') {
     if (nextRunAt >= rangeStart && nextRunAt <= rangeEnd) yield nextRunAt
     return
@@ -82,16 +95,6 @@ function* iterateOccurrences(
     const windowStartMinutes = parseTime(automation.activeWindowStart)
     const windowEndMinutes = parseTime(automation.activeWindowEnd)
     const hasWindow = windowStartMinutes !== undefined && windowEndMinutes !== undefined && windowStartMinutes < windowEndMinutes
-    const weekdays = [...new Set((automation.activeWeekdays ?? []).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
-    const isAllowedDay = (date: Date): boolean => weekdays.length === 0 || weekdays.includes(date.getDay())
-    const nextAllowedDay = (date: Date): Date => {
-      const next = new Date(date)
-      for (let i = 0; i < 7; i++) {
-        if (i > 0) next.setDate(next.getDate() + 1)
-        if (isAllowedDay(next)) return next
-      }
-      return next
-    }
     const advanceInterval = (current: number): number => {
       const candidate = current + step
       const candidateDate = new Date(candidate)
@@ -179,6 +182,14 @@ function* iterateOccurrences(
     }
     if (automation.scheduleType === 'daily') {
       cursor.setDate(cursor.getDate() + 1)
+      // 周内运行日限制：跳到下一个允许的星期，钟点保持不变（跨 DST 的日期加减会带走小时数）
+      if (!isAllowedDay(cursor)) {
+        const hours = cursor.getHours()
+        const minutes = cursor.getMinutes()
+        const next = nextAllowedDay(cursor)
+        next.setHours(hours, minutes, 0, 0)
+        cursor.setTime(next.getTime())
+      }
     } else if (automation.scheduleType === 'weekly') {
       cursor.setDate(cursor.getDate() + 7)
     } else {

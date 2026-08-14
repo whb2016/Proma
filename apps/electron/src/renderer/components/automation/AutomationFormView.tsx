@@ -777,9 +777,14 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
                 const next = v as AutomationDraft['scheduleType']
                 // 默认值必须写入 draft：展示层 fallback 不会进入自动保存请求。
                 // 同时立即清除不适用字段，避免后端归一化后旧配置仍滞留本地并在切回时复活。
-                const clearIntervalFields = {
+                // 每日时间窗口只有 interval 有；运行日 interval 与 daily 共有，
+                // 所以切到 daily 时要留着，切到 weekly/monthly/once 才清。
+                const clearWindowFields = {
                   activeWindowStart: undefined,
                   activeWindowEnd: undefined,
+                }
+                const clearIntervalFields = {
+                  ...clearWindowFields,
                   activeWeekdays: undefined,
                 }
                 if (next === 'interval') {
@@ -794,7 +799,7 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
                 } else if (next === 'daily') {
                   update({
                     scheduleType: next,
-                    ...clearIntervalFields,
+                    ...clearWindowFields,
                     timeOfDay: form.timeOfDay ?? '09:00',
                     dayOfWeek: undefined,
                     dayOfMonth: undefined,
@@ -888,7 +893,27 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
                   />
                 </div>
               )}
-              <div className="flex items-center justify-between pt-1">
+            </div>
+          )}
+
+          {/* daily 模式：时刻 */}
+          {form.scheduleType === 'daily' && (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="auto-time">时刻</Label>
+              <input
+                id="auto-time"
+                type="time"
+                value={form.timeOfDay ?? '09:00'}
+                onChange={(e) => update({ timeOfDay: e.target.value })}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </div>
+          )}
+
+          {/* interval 与 daily 共用：周内运行日。weekly/monthly/once 的运行日由自身字段决定 */}
+          {(form.scheduleType === 'interval' || form.scheduleType === 'daily') && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
                 <Label>运行日</Label>
                 <Select
                   value={weekdayPresetOverride ?? getWeekdayPreset(form.activeWeekdays)}
@@ -908,7 +933,7 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
                 </Select>
               </div>
               {(weekdayPresetOverride ?? getWeekdayPreset(form.activeWeekdays)) === 'custom' && (
-                <div className="flex flex-wrap gap-1.5 pt-1">
+                <div className="flex flex-wrap gap-1.5">
                   {AUTOMATION_WEEKDAY_OPTIONS.map((option) => {
                     const selected = (form.activeWeekdays ?? []).includes(option.value)
                     return (
@@ -926,20 +951,6 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
                   })}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* daily 模式：时刻 */}
-          {form.scheduleType === 'daily' && (
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="auto-time">时刻</Label>
-              <input
-                id="auto-time"
-                type="time"
-                value={form.timeOfDay ?? '09:00'}
-                onChange={(e) => update({ timeOfDay: e.target.value })}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              />
             </div>
           )}
 

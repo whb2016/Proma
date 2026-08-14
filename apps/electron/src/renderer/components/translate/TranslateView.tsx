@@ -70,12 +70,13 @@ const TRANSLATION_REMARK_PLUGINS: RemarkPluginFn[] = [remarkPreserveBreaks]
  * 行间距就是行高 24px；空行走新段落，只多出 6px 合并边距 —— 在 24px 的行距上
  * 肉眼看不出差别，于是「原文两个换行」被显示成「一个换行」。
  *
- * 这里把段间距设成整整一行（1.7em），并把行高对齐左侧 textarea 的 leading-[1.7]，
- * 空行才真的显示成空行、左右两栏的行也才对得上。
+ * 这里把段间距设成略小于一整行（1.4em）、行高对齐左侧 textarea 的 leading-[1.7]，
+ * 空行才真的看得出是空行、左右两栏的行也才对得上。
+ * 取 1.4em 而不是满一行（1.7em）是实际看过后收紧的：满一行偏松。
  * 段落边距足够大后，标题与列表的边距会被合并规则吞掉，不用单独再调。
  */
 const TRANSLATION_PROSE_CLASS =
-  'prose-p:my-[1.7em] prose-p:leading-[1.7] prose-li:leading-[1.7]'
+  'prose-p:my-[1.4em] prose-p:leading-[1.7] prose-li:leading-[1.7]'
 
 export function TranslateView(): React.ReactElement {
   const [targetLanguage, setTargetLanguage] = useAtom(translationTargetLanguageAtom)

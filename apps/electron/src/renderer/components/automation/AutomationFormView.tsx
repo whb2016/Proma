@@ -913,25 +913,25 @@ export function AutomationFormView({ standalone = false }: { standalone?: boolea
           {/* interval 与 daily 共用：周内运行日。weekly/monthly/once 的运行日由自身字段决定 */}
           {(form.scheduleType === 'interval' || form.scheduleType === 'daily') && (
             <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <Label>运行日</Label>
-                <Select
-                  value={weekdayPresetOverride ?? getWeekdayPreset(form.activeWeekdays)}
-                  onValueChange={(value) => {
-                    if (value === 'custom') setWeekdayPresetOverride('custom')
-                    else setWeekdayPresetOverride(null)
-                    update({ activeWeekdays: getWeekdaysFromPreset(value, form.activeWeekdays) })
-                  }}
-                >
-                  <SelectTrigger className="h-9 w-[150px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="everyday">每天</SelectItem>
-                    <SelectItem value="weekdays">工作日（周一至周五）</SelectItem>
-                    <SelectItem value="weekends">周末（周六、周日）</SelectItem>
-                    <SelectItem value="custom">自定义</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* 与「运行频率」「时刻」同样是标签在上、控件整行 —— 150px 装不下
+                  「工作日（周一至周五）」这类选项文案，会被截断成「工作日（周一至周…」 */}
+              <Label>运行日</Label>
+              <Select
+                value={weekdayPresetOverride ?? getWeekdayPreset(form.activeWeekdays)}
+                onValueChange={(value) => {
+                  if (value === 'custom') setWeekdayPresetOverride('custom')
+                  else setWeekdayPresetOverride(null)
+                  update({ activeWeekdays: getWeekdaysFromPreset(value, form.activeWeekdays) })
+                }}
+              >
+                <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="everyday">每天</SelectItem>
+                  <SelectItem value="weekdays">工作日（周一至周五）</SelectItem>
+                  <SelectItem value="weekends">周末（周六、周日）</SelectItem>
+                  <SelectItem value="custom">自定义</SelectItem>
+                </SelectContent>
+              </Select>
               {(weekdayPresetOverride ?? getWeekdayPreset(form.activeWeekdays)) === 'custom' && (
                 <div className="flex flex-wrap gap-1.5">
                   {AUTOMATION_WEEKDAY_OPTIONS.map((option) => {

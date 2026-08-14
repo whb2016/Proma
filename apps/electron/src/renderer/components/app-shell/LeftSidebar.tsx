@@ -56,6 +56,8 @@ import {
   liveMessagesMapAtom,
   agentSessionPendingFilesAtom,
   agentSessionStreamingStateAtomFamily,
+  agentSessionViewStreamStateAtomFamily,
+  agentLiveMessagesAtomFamily,
   agentSessionDraftAtomFamily,
   agentSessionDraftHtmlAtomFamily,
   agentPendingFilesAtomFamily,
@@ -919,6 +921,8 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
     // atomFamily 内部缓存（Jotai 对 string key 强引用 Map，不显式 remove 永不释放）。
     // 删除/归档是会话的终态，连同草稿一起清理，无需像关闭 Tab 那样保留可恢复输入。
     agentSessionStreamingStateAtomFamily.remove(id)
+    agentSessionViewStreamStateAtomFamily.remove(id)
+    agentLiveMessagesAtomFamily.remove(id)
     agentSessionDraftAtomFamily.remove(id)
     agentSessionDraftHtmlAtomFamily.remove(id)
     agentPendingFilesAtomFamily.remove(id)
@@ -1477,6 +1481,11 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
     currentWorkspaceId,
     setCurrentWorkspaceId,
   ])
+
+  const handleConfigureProject = React.useCallback((workspaceId: string): void => {
+    handleSelectProject(workspaceId)
+    handleOpenMcpManagement()
+  }, [handleOpenMcpManagement, handleSelectProject])
 
   /** 展开某个项目时每次额外显示的会话数量 */
   const handleShowMoreSessions = React.useCallback((workspaceId: string): void => {
@@ -2715,7 +2724,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
                 <PanelLeftOpen size={17} />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="right">展开侧边栏 ({navigator.platform.includes('Mac') ? '⌘B' : 'Ctrl+B'})</TooltipContent>
+            <TooltipContent side="right">展开侧边栏 ({navigator.platform.includes('Mac') ? '⌘B' : 'Ctrl+Shift+E'})</TooltipContent>
           </Tooltip>
         </div>
 
@@ -2958,7 +2967,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
               <PanelLeftClose size={14} />
             </button>
           </TooltipTrigger>
-          <TooltipContent side="right">收起侧边栏 ({navigator.platform.includes('Mac') ? '⌘B' : 'Ctrl+B'})</TooltipContent>
+          <TooltipContent side="right">收起侧边栏 ({navigator.platform.includes('Mac') ? '⌘B' : 'Ctrl+Shift+E'})</TooltipContent>
         </Tooltip>
       </div>
 
@@ -3190,10 +3199,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
                     onDragLeave={handleProjectDragLeave}
                     onDrop={handleProjectDrop}
                     onDragEnd={handleProjectDragEnd}
-                    onConfigureProject={isAuto ? noopVoid : (workspaceId) => {
-                      handleSelectProject(workspaceId)
-                      handleOpenMcpManagement()
-                    }}
+                    onConfigureProject={isAuto ? noopVoid : handleConfigureProject}
                     onRenameWorkspace={isAuto ? noopAsync : handleWorkspaceRename}
                     onRelinkProjectRoot={isAuto ? noopAsync : handleRelinkProjectRoot}
                     onRequestRestoreProjectRoot={isAuto ? noopVoid : setPendingRestoreProjectRootId}
@@ -3920,6 +3926,10 @@ const AgentSessionItem = React.memo(function AgentSessionItem({
           onClick={() => onSelect(session.id, session.title)}
           onMouseEnter={() => { setRowHovered(true); preview.handleMouseEnter() }}
           onMouseLeave={() => { setRowHovered(false); preview.handleMouseLeave() }}
+          style={active ? undefined : {
+            contentVisibility: 'auto',
+            containIntrinsicSize: 'auto 30px',
+          }}
           className={cn(
             'session-quick-switch-row group relative w-full flex items-center gap-1.5 rounded-md py-1.5 pl-2.5 pr-1.5 transition-colors duration-100 titlebar-no-drag text-left',
             active && 'agent-session-item-active',

@@ -464,6 +464,10 @@ function compareSemver(a: string, b: string): number {
  */
 export const RETIRED_DEFAULT_SKILL_SLUGS: readonly string[] = [
   'brainstorming',
+  // 本 fork 关掉了受管浏览器（见 fork-features.ts）。走退役名单而不是删 bundled 目录：
+  // 目录留着与上游一致、合并永不冲突，同时老工作区里已装的这份会被自动清掉 ——
+  // 否则它会继续把 Agent 路由到已经不存在的 Browser* 工具。
+  'in-app-browser',
 ]
 
 const RETIRED_DEFAULT_SKILL_SLUG_SET = new Set(RETIRED_DEFAULT_SKILL_SLUGS)
@@ -533,6 +537,9 @@ export function seedDefaultSkills(): void {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
+      // 退役 Skill 的 bundled 目录仍与上游保持一致（合并不冲突），但不能再往用户目录同步，
+      // 否则上面刚 removeRetiredDefaultSkills 删掉的目录会在同一次启动里被原样拷回来。
+      if (isRetiredDefaultSkill(entry.name)) continue
 
       const source = join(bundledDir, entry.name)
       const target = join(userDir, entry.name)

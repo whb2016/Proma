@@ -75,6 +75,7 @@ import {
 } from '../web-search-service'
 import { browserController } from '../browser-controller'
 import { resolveBrowserProfileKey } from '../browser-profile-policy'
+import { IN_APP_BROWSER_ENABLED } from '../fork-features'
 
 type PiSdk = typeof import('@earendil-works/pi-coding-agent')
 
@@ -1208,10 +1209,13 @@ export async function buildPiBuiltinTools(
 
   // Pi-native 受管浏览器不经过 MCP：网页 WebContents 和 CDP 永远停留在主进程。
   // 用户会话、自动任务与协作子会话共用同一套受管浏览器能力，仍受 URL、下载和权限策略约束。
-  try {
-    tools.push(...buildBrowserTools(sdk, ctx))
-  } catch (error) {
-    console.error('[Pi 桥接] 注入受管浏览器工具失败:', error)
+  // 本 fork 默认关闭（见 fork-features.ts）：网页自动化改用外部 playwright-cli。
+  if (IN_APP_BROWSER_ENABLED) {
+    try {
+      tools.push(...buildBrowserTools(sdk, ctx))
+    } catch (error) {
+      console.error('[Pi 桥接] 注入受管浏览器工具失败:', error)
+    }
   }
 
   // 视觉助手仅在明确不支持视觉的 DeepSeek V4 用户会话中按需出现。

@@ -11,6 +11,7 @@
 
 import type { BuiltinMcpCategory, McpToolSummary } from '@proma/shared'
 import manifest from './default-mcp.json' with { type: 'json' }
+import { DISABLED_BUILTIN_MCP_IDS } from '../fork-features'
 
 export interface BuiltinMcpDefinition {
   /** 设置 / 凭据键，历史值，向后兼容（如 'proma-cloud'、'nano-banana'） */
@@ -31,9 +32,13 @@ export interface BuiltinMcpDefinition {
   tools: McpToolSummary[]
 }
 
-const DEFINITIONS: BuiltinMcpDefinition[] = (manifest.servers as unknown as BuiltinMcpDefinition[]).map((s) => ({
-  ...s,
-}))
+const DEFINITIONS: BuiltinMcpDefinition[] = (manifest.servers as unknown as BuiltinMcpDefinition[])
+  // 本 fork 隐藏的内置 MCP。在这里过滤而不是删 default-mcp.json 里的条目，
+  // 是为了让那份清单与上游保持字节一致，合并时永不冲突。
+  .filter((s) => !DISABLED_BUILTIN_MCP_IDS.has(s.id))
+  .map((s) => ({
+    ...s,
+  }))
 
 const BY_ID = new Map<string, BuiltinMcpDefinition>(DEFINITIONS.map((d) => [d.id, d]))
 

@@ -48,8 +48,8 @@ export function useSyncActiveTabSideEffects(): SyncActiveTabSideEffects {
         return
       }
 
-      if (newActiveTab.type === 'scratch') {
-        // Agent 模式下切到 Scratch Pad 时保持右侧文件面板不收起
+      if (newActiveTab.type === 'scratch' || newActiveTab.type === 'translate') {
+        // Agent 模式下切到常驻入口（草稿 / 翻译）时保持右侧文件面板不收起
         setCurrentConversationId(null)
         if (appMode !== 'agent') {
           setCurrentAgentSessionId(null)

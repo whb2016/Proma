@@ -88,6 +88,7 @@ import { disposePiMcpConnections } from './lib/adapters/pi-mcp-tools'
 import { browserController } from './lib/browser-controller'
 import { markRunningDelegationsAsInterrupted } from './lib/agent-session-manager'
 import { stopAllGenerations } from './lib/chat-service'
+import { stopAllTranslations } from './lib/translate-service'
 import { configureUpdater, initAutoUpdater, cleanupUpdater } from './lib/updater/auto-updater'
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from './lib/workspace-watcher'
 import { startChatToolsWatcher, stopChatToolsWatcher } from './lib/chat-tools-watcher'
@@ -854,6 +855,7 @@ app.on('before-quit', () => {
   stopAllAgents()
   browserController.dispose()
   stopAllGenerations()
+  stopAllTranslations()
   // 清理更新器定时器
   cleanupUpdater()
   // 停止工作区文件监听

@@ -7,7 +7,13 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, QQ_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, AGENT_ISLAND_IPC_CHANNELS } from '@proma/shared'
-import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS } from '../types'
+import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, TRANSLATION_IPC_CHANNELS } from '../types'
+import type {
+  TranslationRequestInput,
+  TranslationStreamChunkEvent,
+  TranslationStreamCompleteEvent,
+  TranslationStreamErrorEvent,
+} from '../types'
 import type {
   RuntimeStatus,
   GitRepoStatus,
@@ -499,6 +505,23 @@ export interface ElectronAPI {
 
   /** 订阅流式工具活动事件 */
   onStreamToolActivity: (callback: (event: StreamToolActivityEvent) => void) => () => void
+
+  // ===== 翻译标签页 =====
+
+  /** 发起翻译（流式回传译文） */
+  translate: (input: TranslationRequestInput) => Promise<void>
+
+  /** 中止指定翻译请求 */
+  stopTranslation: (requestId: string) => Promise<void>
+
+  /** 订阅译文片段事件 */
+  onTranslationChunk: (callback: (event: TranslationStreamChunkEvent) => void) => () => void
+
+  /** 订阅翻译完成事件 */
+  onTranslationComplete: (callback: (event: TranslationStreamCompleteEvent) => void) => () => void
+
+  /** 订阅翻译错误事件 */
+  onTranslationError: (callback: (event: TranslationStreamErrorEvent) => void) => () => void
 
   // ===== Agent 会话管理相关 =====
 
@@ -1712,6 +1735,33 @@ const electronAPI: ElectronAPI = {
     const listener = (_: unknown, event: StreamToolActivityEvent): void => callback(event)
     ipcRenderer.on(CHAT_IPC_CHANNELS.STREAM_TOOL_ACTIVITY, listener)
     return () => { ipcRenderer.removeListener(CHAT_IPC_CHANNELS.STREAM_TOOL_ACTIVITY, listener) }
+  },
+
+  // 翻译标签页
+  translate: (input: TranslationRequestInput) => {
+    return ipcRenderer.invoke(TRANSLATION_IPC_CHANNELS.TRANSLATE, input)
+  },
+
+  stopTranslation: (requestId: string) => {
+    return ipcRenderer.invoke(TRANSLATION_IPC_CHANNELS.STOP, requestId)
+  },
+
+  onTranslationChunk: (callback: (event: TranslationStreamChunkEvent) => void) => {
+    const listener = (_: unknown, event: TranslationStreamChunkEvent): void => callback(event)
+    ipcRenderer.on(TRANSLATION_IPC_CHANNELS.STREAM_CHUNK, listener)
+    return () => { ipcRenderer.removeListener(TRANSLATION_IPC_CHANNELS.STREAM_CHUNK, listener) }
+  },
+
+  onTranslationComplete: (callback: (event: TranslationStreamCompleteEvent) => void) => {
+    const listener = (_: unknown, event: TranslationStreamCompleteEvent): void => callback(event)
+    ipcRenderer.on(TRANSLATION_IPC_CHANNELS.STREAM_COMPLETE, listener)
+    return () => { ipcRenderer.removeListener(TRANSLATION_IPC_CHANNELS.STREAM_COMPLETE, listener) }
+  },
+
+  onTranslationError: (callback: (event: TranslationStreamErrorEvent) => void) => {
+    const listener = (_: unknown, event: TranslationStreamErrorEvent): void => callback(event)
+    ipcRenderer.on(TRANSLATION_IPC_CHANNELS.STREAM_ERROR, listener)
+    return () => { ipcRenderer.removeListener(TRANSLATION_IPC_CHANNELS.STREAM_ERROR, listener) }
   },
 
   // Agent 会话管理

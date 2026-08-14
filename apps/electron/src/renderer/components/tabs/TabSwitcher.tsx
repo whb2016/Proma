@@ -19,8 +19,11 @@ import {
   tabsAtom,
   scratchPadPanelOpenAtom,
   focusScratchPadTab,
+  focusTranslateTab,
   SCRATCH_PAD_ID,
   SCRATCH_PAD_TITLE,
+  TRANSLATE_TAB_ID,
+  TRANSLATE_TAB_TITLE,
 } from '@/atoms/tab-atoms'
 import { previewFileMapAtom } from '@/atoms/preview-atoms'
 import { getInitialTabSwitchIndex, promoteTabMru } from '@/lib/tab-switching'
@@ -42,10 +45,10 @@ import {
 } from '@/atoms/agent-atoms'
 import type { SessionIndicatorStatus } from '@/atoms/agent-atoms'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
-import { Bot, GitBranch, MessageSquare, StickyNote } from 'lucide-react'
+import { Bot, GitBranch, Languages, MessageSquare, StickyNote } from 'lucide-react'
 
 type SwitchSectionId = 'collaboration' | 'recent'
-type SwitchCandidateType = 'chat' | 'agent' | 'scratch'
+type SwitchCandidateType = 'chat' | 'agent' | 'scratch' | 'translate'
 
 interface SwitchCandidate {
   id: string
@@ -115,6 +118,13 @@ export function TabSwitcher(): ReactElement | null {
       updatedAt: 0,
       status: 'idle',
     }
+    const translateCandidate: SwitchCandidate = {
+      id: TRANSLATE_TAB_ID,
+      type: 'translate',
+      title: TRANSLATE_TAB_TITLE,
+      updatedAt: 0,
+      status: 'idle',
+    }
 
     const buildAgentCandidate = (session: AgentSessionMeta): SwitchCandidate => {
       const status = agentIndicatorMap.get(session.id)
@@ -145,7 +155,7 @@ export function TabSwitcher(): ReactElement | null {
       .filter((session) => !session.archived && !draftSessionIds.has(session.id))
       .map(buildAgentCandidate)
 
-    const allCandidates = [scratchPadCandidate, ...chatCandidates, ...agentCandidates]
+    const allCandidates = [translateCandidate, scratchPadCandidate, ...chatCandidates, ...agentCandidates]
 
     const candidateById = new Map(allCandidates.map((candidate) => [candidate.id, candidate]))
     const activeAgentSession = activeSessionId
@@ -260,6 +270,23 @@ export function TabSwitcher(): ReactElement | null {
       // 否则 activeTab 已变更而 TabContent 仍不可见。
       setAutomationForm({ open: false, draft: null })
       setActiveView('conversations')
+
+      if (candidate.type === 'translate') {
+        const nextTab = focusTranslateTab(tabsRef.current)
+        setTabs(nextTab.tabs)
+        setActiveTabId(nextTab.activeTabId)
+        activeSessionIdRef.current = candidate.id
+        setTabMru((prev) => {
+          const next = promoteTabMru(prev, candidate.id)
+          tabMruRef.current = next
+          return next
+        })
+        setCurrentConversationId(null)
+        if (appMode !== 'agent') {
+          setCurrentAgentSessionId(null)
+        }
+        return
+      }
 
       if (candidate.type === 'scratch') {
         const nextTab = focusScratchPadTab(tabsRef.current)
@@ -571,6 +598,11 @@ function SwitcherCandidateRow({
           <>
             <StickyNote className="size-2.5" />
             草稿
+          </>
+        ) : candidate.type === 'translate' ? (
+          <>
+            <Languages className="size-2.5" />
+            翻译
           </>
         ) : (
           <>

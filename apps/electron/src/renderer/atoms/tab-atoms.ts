@@ -1,9 +1,12 @@
 /**
  * Tab Atoms — 当前工作区入口状态管理
  *
- * 顶部只保留 Scratch Pad 与当前会话两个入口；会话恢复与导航交给左侧列表。
+ * 顶部保留两个常驻入口（翻译、Scratch Pad）与当前会话；会话恢复与导航交给左侧列表。
  * 通过桥接 atom 与现有 currentConversationIdAtom / currentAgentSessionIdAtom 同步，
  * 确保所有现有派生 atoms 无需修改。
+ *
+ * 常驻入口不是"往列表里 push 一个"就完事：openTab 每次都重建整个列表，
+ * 所以固定前缀由 getFixedTabs 统一产出，所有重建入口都基于它构造。
  */
 
 import { atom } from 'jotai'
@@ -22,10 +25,16 @@ import type { PreviewFile } from './preview-atoms'
 // ===== 类型定义 =====
 
 /** 标签页类型（Settings 不作为 Tab，保留独立视图） */
-export type TabType = 'chat' | 'agent' | 'scratch' | 'preview' | 'tutorial'
+export type TabType = 'chat' | 'agent' | 'scratch' | 'translate' | 'preview' | 'tutorial'
 
 /** Scratch Pad 专用的固定 sessionId */
 export const SCRATCH_PAD_ID = '__scratch-pad__'
+
+/** 翻译 Tab 固定 ID（常驻入口，无会话） */
+export const TRANSLATE_TAB_ID = '__translate__'
+
+/** 翻译标签显示标题 */
+export const TRANSLATE_TAB_TITLE = '翻译'
 
 /** 教程 Tab 固定 ID */
 export const TUTORIAL_TAB_ID = '__tutorial__'
@@ -191,7 +200,7 @@ export const tabStreamingMapAtom = atom<Map<string, boolean>>((get) => {
   const agentRunning = get(agentRunningSessionIdsAtom)
   const map = new Map<string, boolean>()
   for (const tab of tabs) {
-    if (tab.type === 'scratch') continue
+    if (tab.type === 'scratch' || tab.type === 'translate') continue
     if (tab.type === 'chat') {
       map.set(tab.id, chatStreaming.has(tab.sessionId))
     } else if (tab.type === 'agent') {
@@ -209,7 +218,7 @@ export const tabIndicatorMapAtom = atom<Map<string, SessionIndicatorStatus>>((ge
   const unviewedCompletedIds = get(unviewedCompletedSessionIdsAtom)
   const map = new Map<string, SessionIndicatorStatus>()
   for (const tab of tabs) {
-    if (tab.type === 'scratch') continue
+    if (tab.type === 'scratch' || tab.type === 'translate') continue
     if (tab.type === 'chat') {
       map.set(tab.id, chatStreaming.has(tab.sessionId) ? 'running' : 'idle')
     } else if (tab.type === 'agent') {
@@ -232,6 +241,43 @@ function createScratchPadTab(): TabItem {
   }
 }
 
+function createTranslateTab(): TabItem {
+  return {
+    id: TRANSLATE_TAB_ID,
+    type: 'translate',
+    sessionId: TRANSLATE_TAB_ID,
+    title: TRANSLATE_TAB_TITLE,
+  }
+}
+
+/**
+ * 常驻入口的固定前缀：翻译在最左，草稿紧随其后。
+ *
+ * openTab 每次都重建整个 tabs 数组，所以这里是"常驻"的唯一事实源 ——
+ * 任何重建入口都必须以它开头，否则常驻 Tab 会在下一次切会话时消失。
+ * 已存在的 Tab 复用原对象引用，避免每次切换都让 TabBarItem 白重渲染。
+ */
+export function getFixedTabs(tabs: TabItem[]): TabItem[] {
+  const translateTab = tabs.find((tab) => tab.id === TRANSLATE_TAB_ID) ?? createTranslateTab()
+  const scratchTab = tabs.find((tab) => tab.id === SCRATCH_PAD_ID) ?? createScratchPadTab()
+  return [translateTab, scratchTab]
+}
+
+/** 常驻入口不可关闭，也不参与持久化（每次启动重新注入）。 */
+export function isFixedTabId(tabId: string): boolean {
+  return tabId === TRANSLATE_TAB_ID || tabId === SCRATCH_PAD_ID
+}
+
+/**
+ * 没有明确激活目标时该落在哪个 Tab。
+ *
+ * 固定前缀的第一个是翻译，但冷启动的历史默认是草稿页，
+ * 所以这里显式优先草稿，不能简单取 tabs[0]。
+ */
+export function getDefaultActiveTabId(tabs: TabItem[]): string | null {
+  return tabs.find((tab) => tab.id === SCRATCH_PAD_ID)?.id ?? tabs[0]?.id ?? null
+}
+
 /**
  * 将固定草稿 Tab 放回顶部并聚焦，同时保留现有会话/预览上下文。
  * 草稿被拖到右侧分屏时会暂时从 tabsAtom 移除，Ctrl+Tab 需要通过此入口恢复它。
@@ -241,13 +287,22 @@ export function focusScratchPadTab(tabs: TabItem[]): {
   activeTabId: string
   scratchPanelOpen: false
 } {
-  const scratchTab = tabs.find((tab) => tab.id === SCRATCH_PAD_ID && tab.type === 'scratch')
-    ?? createScratchPadTab()
   return {
-    tabs: [scratchTab, ...tabs.filter((tab) => tab.id !== SCRATCH_PAD_ID)],
+    tabs: [...getFixedTabs(tabs), ...tabs.filter((tab) => !isFixedTabId(tab.id))],
     activeTabId: SCRATCH_PAD_ID,
     // 从右侧分屏回到完整草稿页时，必须关闭分屏；否则下次切回 Agent 会话会出现重复草稿。
     scratchPanelOpen: false,
+  }
+}
+
+/** 聚焦常驻翻译入口，保留现有会话/预览上下文。 */
+export function focusTranslateTab(tabs: TabItem[]): {
+  tabs: TabItem[]
+  activeTabId: string
+} {
+  return {
+    tabs: [...getFixedTabs(tabs), ...tabs.filter((tab) => !isFixedTabId(tab.id))],
+    activeTabId: TRANSLATE_TAB_ID,
   }
 }
 
@@ -277,7 +332,7 @@ function isSessionTab(tab: TabItem): boolean {
 }
 
 function getPersistentTabs(tabs: TabItem[]): TabItem[] {
-  return tabs.filter((tab) => tab.id !== SCRATCH_PAD_ID && tab.id !== TUTORIAL_TAB_ID && !isPreviewTab(tab))
+  return tabs.filter((tab) => !isFixedTabId(tab.id) && tab.id !== TUTORIAL_TAB_ID && !isPreviewTab(tab))
 }
 
 export function getPersistableTabState(
@@ -305,12 +360,20 @@ export function openTab(
   item: { type: TabType; sessionId: string; title: string },
   restore?: OpenTabRestore,
 ): { tabs: TabItem[]; activeTabId: string } {
-  const scratchTab = tabs.find((t) => t.id === SCRATCH_PAD_ID) ?? createScratchPadTab()
+  // 常驻入口永远在最左侧，且顺序固定；下面每个分支都以它开头重建列表。
+  const fixedTabs = getFixedTabs(tabs)
 
   if (item.type === 'scratch') {
     return {
-      tabs: [scratchTab],
+      tabs: fixedTabs,
       activeTabId: SCRATCH_PAD_ID,
+    }
+  }
+
+  if (item.type === 'translate') {
+    return {
+      tabs: fixedTabs,
+      activeTabId: TRANSLATE_TAB_ID,
     }
   }
 
@@ -322,7 +385,7 @@ export function openTab(
       title: TUTORIAL_TAB_TITLE,
     }
     return {
-      tabs: [scratchTab, tutorialTab],
+      tabs: [...fixedTabs, tutorialTab],
       activeTabId: TUTORIAL_TAB_ID,
     }
   }
@@ -342,7 +405,7 @@ export function openTab(
     }
 
     return {
-      tabs: [scratchTab, ownerAgentTab, previewTab],
+      tabs: [...fixedTabs, ownerAgentTab, previewTab],
       activeTabId: previewTab.id,
     }
   }
@@ -364,13 +427,13 @@ export function openTab(
       title: restore.previewTitle,
     }
     return {
-      tabs: [scratchTab, sessionTab, previewTab],
+      tabs: [...fixedTabs, sessionTab, previewTab],
       activeTabId: restore.lastView === 'preview' ? previewTab.id : sessionTab.id,
     }
   }
 
   return {
-    tabs: [scratchTab, sessionTab],
+    tabs: [...fixedTabs, sessionTab],
     activeTabId: sessionTab.id,
   }
 }
@@ -395,14 +458,14 @@ export function buildOpenTabRestore(
   }
 }
 
-/** 关闭标签页（scratch tab 不可关闭） */
+/** 关闭标签页（常驻入口不可关闭） */
 export function closeTab(
   tabs: TabItem[],
   activeTabId: string | null,
   tabId: string,
 ): { tabs: TabItem[]; activeTabId: string | null } {
-  // Scratch Pad 不可关闭
-  if (tabId === SCRATCH_PAD_ID) return { tabs, activeTabId }
+  // 翻译与 Scratch Pad 是常驻入口，不可关闭
+  if (isFixedTabId(tabId)) return { tabs, activeTabId }
 
   const tabIndex = tabs.findIndex((t) => t.id === tabId)
   if (tabIndex === -1) return { tabs, activeTabId }
@@ -425,15 +488,16 @@ export function closeTab(
   return { tabs: newTabs, activeTabId: newActiveTabId }
 }
 
-/** 重排标签顺序（当前只保留 Scratch + 当前会话，保留函数用于兼容旧调用） */
+/** 重排标签顺序（当前只保留常驻入口 + 当前会话，保留函数用于兼容旧调用） */
 export function reorderTabs(
   tabs: TabItem[],
   fromIndex: number,
   toIndex: number,
 ): TabItem[] {
   if (fromIndex === toIndex) return tabs
-  // Scratch 不可移出第 0 位
-  if (tabs[0]?.id === SCRATCH_PAD_ID && (fromIndex === 0 || toIndex === 0)) return tabs
+  // 常驻入口不可移出固定前缀
+  const fixedCount = tabs.filter((tab) => isFixedTabId(tab.id)).length
+  if (fromIndex < fixedCount || toIndex < fixedCount) return tabs
   const newTabs = [...tabs]
   const [moved] = newTabs.splice(fromIndex, 1)
   newTabs.splice(toIndex, 0, moved!)
@@ -451,13 +515,13 @@ export function updateTabTitle(
   )
 }
 
-/** 确保 Scratch Pad 标签存在并位于首位，同时只保留一个会话入口 */
+/**
+ * 确保常驻入口（翻译 + Scratch Pad）存在并位于最左，同时只保留一个会话入口。
+ *
+ * 函数名沿用历史（调用方在 main.tsx 的启动与恢复链路上），现在覆盖两个常驻入口。
+ */
 export function ensureScratchPadTab(tabs: TabItem[]): TabItem[] {
-  const scratchTab = tabs.find((t) => t.id === SCRATCH_PAD_ID)
-  const sessionTab = tabs.filter((t) => t.id !== SCRATCH_PAD_ID && !isPreviewTab(t)).at(-1)
-  if (scratchTab) {
-    return sessionTab ? [scratchTab, sessionTab] : [scratchTab]
-  }
-  const newTab = createScratchPadTab()
-  return sessionTab ? [newTab, sessionTab] : [newTab]
+  const sessionTab = tabs.filter((t) => !isFixedTabId(t.id) && !isPreviewTab(t)).at(-1)
+  const fixedTabs = getFixedTabs(tabs)
+  return sessionTab ? [...fixedTabs, sessionTab] : fixedTabs
 }

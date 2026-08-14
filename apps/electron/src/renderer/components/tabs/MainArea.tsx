@@ -13,6 +13,7 @@ import {
   tabsAtom,
   activeTabIdAtom,
   activeTabAtom,
+  getDefaultActiveTabId,
   scratchPadPanelOpenAtom,
   rightWorkspaceSplitRatioAtom,
 } from '@/atoms/tab-atoms'
@@ -211,7 +212,8 @@ export function MainArea(): React.ReactElement {
 
   React.useEffect(() => {
     if (tabs.length > 0 && !activeTabId) {
-      setActiveTabId(tabs[0]!.id)
+      // 固定前缀第一个是翻译，但冷启动的历史默认落在草稿页，所以走显式兜底。
+      setActiveTabId(getDefaultActiveTabId(tabs))
     }
   }, [tabs, activeTabId, setActiveTabId])
 

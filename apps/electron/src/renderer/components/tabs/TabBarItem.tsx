@@ -9,7 +9,7 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { useAtomValue } from 'jotai'
-import { FileText, StickyNote, X, Clock, GitBranch } from 'lucide-react'
+import { FileText, StickyNote, X, Clock, GitBranch, Languages } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { TabType, TabMinimapItem } from '@/atoms/tab-atoms'
 import type { SessionIndicatorStatus } from '@/atoms/agent-atoms'
@@ -75,6 +75,8 @@ export function TabBarItem({
   const minimapCache = useAtomValue(tabMinimapCacheAtom)
   const interfaceVariant = useAtomValue(interfaceVariantAtom)
   const isClassic = interfaceVariant === 'classic'
+  /** 翻译 / 草稿：常驻入口，不可关闭、不参与 tear-off */
+  const isFixed = type === 'scratch' || type === 'translate'
 
   React.useEffect(() => {
     const el = buttonRef.current
@@ -88,8 +90,8 @@ export function TabBarItem({
   }, [])
 
   const handleMouseDown = (e: React.MouseEvent): void => {
-    // Scratch Pad 不可中键关闭
-    if (type === 'scratch') return
+    // 常驻入口不可中键关闭
+    if (isFixed) return
     if (e.button === 1) {
       e.preventDefault()
       onMiddleClick()
@@ -101,14 +103,14 @@ export function TabBarItem({
     onClose()
   }
 
-  const isScratch = type === 'scratch'
   const showAgentSpinner = type === 'agent' && isStreaming === 'running'
   const previewItems = minimapCache.get(id) ?? []
   // 当前 active Tab 不显示预览面板
   const showPreview = isHovered && !isActive
 
-  // Scratch Pad 是固定草稿入口
-  if (isScratch) {
+  // 翻译与草稿是常驻入口：固定宽度、图标 + 短标题、无关闭按钮
+  if (isFixed) {
+    const FixedIcon = type === 'translate' ? Languages : StickyNote
     return (
       <div
         className="relative flex-shrink-0 titlebar-no-drag"
@@ -135,8 +137,8 @@ export function TabBarItem({
           onMouseDown={handleMouseDown}
           onPointerDown={onDragStart}
         >
-          <StickyNote className="size-3.5" />
-          <span className="truncate">草稿</span>
+          <FixedIcon className="size-3.5" />
+          <span className="truncate">{type === 'translate' ? '翻译' : '草稿'}</span>
         </button>
       </div>
     )
@@ -191,8 +193,7 @@ export function TabBarItem({
           </span>
         )}
 
-        {/* 关闭按钮（scratch 类型不显示） */}
-        {!isScratch && (
+        {/* 关闭按钮（常驻入口已在上面提前返回，走到这里的 Tab 一定可关闭） */}
         <span
           role="button"
           tabIndex={-1}
@@ -208,7 +209,6 @@ export function TabBarItem({
         >
           <X className="size-2.5" />
         </span>
-        )}
 
       </button>
 

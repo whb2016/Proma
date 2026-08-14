@@ -75,6 +75,7 @@ import {
   activeSessionIdAtom,
   sidebarCollapsedAtom,
   closeTab,
+  getDefaultActiveTabId,
   updateTabTitle,
   sessionViewStateMapAtom,
 } from '@/atoms/tab-atoms'
@@ -1413,7 +1414,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
       ))
       const nextActiveTabId = currentActiveTabId && nextTabs.some((tab) => tab.id === currentActiveTabId)
         ? currentActiveTabId
-        : nextTabs[0]?.id ?? null
+        : getDefaultActiveTabId(nextTabs)
 
       setTabs(nextTabs)
       setActiveTabId(nextActiveTabId)
@@ -1983,7 +1984,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
     ))
     const nextActiveTabId = currentActiveTabId && nextTabs.some((tab) => tab.id === currentActiveTabId)
       ? currentActiveTabId
-      : nextTabs[0]?.id ?? null
+      : getDefaultActiveTabId(nextTabs)
 
     setTabs(nextTabs)
     setActiveTabId(nextActiveTabId)

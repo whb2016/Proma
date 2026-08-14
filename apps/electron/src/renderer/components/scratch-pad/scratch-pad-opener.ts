@@ -8,9 +8,10 @@
 import type { useStore } from 'jotai'
 import {
   activeTabIdAtom,
+  getFixedTabs,
+  isFixedTabId,
   scratchPadPanelOpenAtom,
   SCRATCH_PAD_ID,
-  SCRATCH_PAD_TITLE,
   tabsAtom,
   type TabItem,
 } from '@/atoms/tab-atoms'
@@ -30,15 +31,6 @@ interface ScratchPadAgentSession {
 }
 
 type JotaiStore = ReturnType<typeof useStore>
-
-function createScratchTab(): TabItem {
-  return {
-    id: SCRATCH_PAD_ID,
-    type: 'scratch',
-    sessionId: SCRATCH_PAD_ID,
-    title: SCRATCH_PAD_TITLE,
-  }
-}
 
 function findTargetAgentTab(
   tabs: TabItem[],
@@ -99,5 +91,6 @@ export function closeScratchInSplit(store: JotaiStore): void {
   store.set(scratchPadPanelOpenAtom, false)
 
   if (tabs.some((tab) => tab.id === SCRATCH_PAD_ID)) return
-  store.set(tabsAtom, [createScratchTab(), ...tabs])
+  // 通过固定前缀重建，草稿会落在翻译入口右侧，而不是被插到最左。
+  store.set(tabsAtom, [...getFixedTabs(tabs), ...tabs.filter((tab) => !isFixedTabId(tab.id))])
 }

@@ -64,6 +64,7 @@ import {
 } from './atoms/markdown-font-size'
 import { useGlobalAgentListeners } from './hooks/useGlobalAgentListeners'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
+import { useGlobalTranslationListeners } from './hooks/useGlobalTranslationListeners'
 import { tabsAtom, activeTabIdAtom, ensureScratchPadTab, getPersistableTabState, scratchPadContentAtom, scratchPadLoadedAtom, SCRATCH_PAD_ID } from './atoms/tab-atoms'
 import type { TabItem } from './atoms/tab-atoms'
 import { chatToolsAtom } from './atoms/chat-tool-atoms'
@@ -668,6 +669,17 @@ function AgentListenersInitializer(): null {
 }
 
 /**
+ * 翻译 IPC 监听器初始化组件
+ *
+ * 全局挂载，永不销毁。翻译视图会随切 Tab 卸载，
+ * 监听器挂在这里才能保证切走再切回时流式输出不断。
+ */
+function TranslationListenersInitializer(): null {
+  useGlobalTranslationListeners()
+  return null
+}
+
+/**
  * Chat 工具初始化组件
  *
  * 启动时从主进程加载所有工具信息到 atom。
@@ -1168,6 +1180,7 @@ if (isQuickTaskWindow) {
       <MarkdownFontSizeInitializer />
       <ChatListenersInitializer />
       <AgentListenersInitializer />
+      <TranslationListenersInitializer />
       <ChatToolInitializer />
       <UpdaterInitializer />
       <AutomationInitializer />

@@ -1,9 +1,11 @@
 import type { AgentSessionMeta } from '@proma/shared'
 import type { AgentStreamState } from '@/atoms/agent-atoms'
+import type { TabType } from '@/atoms/tab-atoms'
 
 export interface ExternalAgentRunTab {
   id: string
-  type: 'chat' | 'agent' | 'scratch' | 'preview' | 'tutorial'
+  // 直接复用 TabType，避免这份联合类型与 tab-atoms 各自漂移
+  type: TabType
   sessionId: string
   title: string
 }

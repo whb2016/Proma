@@ -209,7 +209,7 @@ export function PromptEditorSidebar(): React.ReactElement {
       {/* 底部追加设置 */}
       <div className="border-t px-3 py-2.5 shrink-0">
         <label className="flex items-center justify-between gap-2 cursor-pointer">
-          <span className="text-xs text-muted-foreground">追加日期时间和用户名</span>
+          <span className="text-xs text-muted-foreground">追加日期和用户名</span>
           <Switch
             checked={config.appendDateTimeAndUserName}
             onCheckedChange={handleAppendChange}

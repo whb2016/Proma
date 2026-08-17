@@ -49,6 +49,27 @@ export const selectedPromptAtom = atom<SystemPrompt | undefined>((get) => {
   return config.prompts.find((p) => p.id === selectedId)
 })
 
+/**
+ * 拼接日期与用户名的附加段
+ *
+ * **精度只到「日」，不能带时分**：这段拼在系统提示词末尾，而 Anthropic 的提示词缓存
+ * 是前缀匹配、渲染顺序为 `tools → system → messages`。带上分钟的话，分钟一跳整段前缀
+ * 就作废，多轮追问永远吃不到缓存，而且任何消息侧的断点都救不回来（它们都排在 system
+ * 之后）。降到日期后前缀能稳一整天。见 [[chat-prompt-caching-notes]]。
+ *
+ * 需要模型知道精确时刻的场景（定时任务、Agent）走各自的注入链路，不依赖这里 ——
+ * Agent 侧是按每条用户消息注入（agent-prompt-builder.ts 的 buildDynamicContext）。
+ */
+function buildDateAndUserNameAppendix(userName: string): string {
+  const dateStr = new Date().toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'long',
+  })
+  return `\n\n---\n当前日期: ${dateStr}\n用户名: ${userName}`
+}
+
 /** 解析最终 systemMessage（派生只读） */
 export const resolvedSystemMessageAtom = atom<string | undefined>((get) => {
   const selectedPrompt = get(selectedPromptAtom)
@@ -59,17 +80,7 @@ export const resolvedSystemMessageAtom = atom<string | undefined>((get) => {
   const config = get(promptConfigAtom)
   if (config.appendDateTimeAndUserName) {
     const userProfile = get(userProfileAtom)
-    const now = new Date()
-    const dateTimeStr = now.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      weekday: 'long',
-    })
-    const appendix = `\n\n---\n当前时间: ${dateTimeStr}\n用户名: ${userProfile.userName}`
-    message += appendix
+    message += buildDateAndUserNameAppendix(userProfile.userName)
   }
 
   return message
@@ -92,16 +103,7 @@ export function resolveSystemMessage(
   let message = prompt.content
 
   if (config.appendDateTimeAndUserName) {
-    const now = new Date()
-    const dateTimeStr = now.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      weekday: 'long',
-    })
-    message += `\n\n---\n当前时间: ${dateTimeStr}\n用户名: ${userName}`
+    message += buildDateAndUserNameAppendix(userName)
   }
 
   return message

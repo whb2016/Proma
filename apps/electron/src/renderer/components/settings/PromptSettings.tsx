@@ -227,8 +227,8 @@ export function PromptSettings(): React.ReactElement {
       <SettingsSection title="增强选项">
         <SettingsCard>
           <SettingsToggle
-            label="追加日期时间和用户名"
-            description="在提示词末尾自动追加当前日期时间和用户名"
+            label="追加日期和用户名"
+            description="在提示词末尾自动追加当前日期和用户名。不含时分，以免每分钟让提示词缓存失效"
             checked={config.appendDateTimeAndUserName}
             onCheckedChange={handleAppendChange}
           />

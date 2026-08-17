@@ -224,6 +224,13 @@ export interface StreamRequestInput {
   tools?: ToolDefinition[]
   /** 工具续接消息（tool use 循环中，前一轮的 tool_use + tool_result） */
   continuationMessages?: ContinuationMessage[]
+  /**
+   * 不透明的用户标识，用于上游按用户维度做滥用追踪与限流。
+   *
+   * 必须由调用方构造好传进来（core 层不读用户档案）。目前只有 Anthropic 协议
+   * 适配器会用它（写成 `metadata.user_id`），其余适配器忽略。
+   */
+  userId?: string
 }
 
 /** 标题生成请求的输入参数 */

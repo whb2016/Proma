@@ -31,6 +31,8 @@ import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { getEnabledTools } from './chat-tool-registry'
 import { executeToolCalls } from './chat-tool-executor'
 import { createFallbackTitle, sanitizeGeneratedTitle, SHORT_MESSAGE_THRESHOLD, TITLE_PROMPT } from './title-generation'
+import { buildAgentUserId } from './agent-request-metadata'
+import { getConfigDir } from './config-paths'
 
 /** 活跃的 AbortController 映射（conversationId → controller） */
 const activeControllers = new Map<string, AbortController>()
@@ -280,6 +282,11 @@ export async function sendMessage(
     const proxyUrl = await getEffectiveProxyUrl()
     const fetchFn = getFetchFn(proxyUrl)
 
+    // 用户标识与 Agent 模式共用一套构造（用户名哈希 + 会话 id，不含 PII）：
+    // 同一用户在两种模式下哈希一致，上游能按「用户」维度聚合。
+    // Agent 那边的「会话」是 agent session，Chat 这边就是对话 id。
+    const userId = buildAgentUserId(getConfigDir(), conversationId)
+
     // 9. 工具续接循环
     let continuationMessages: ContinuationMessage[] = []
     let round = 0
@@ -334,6 +341,7 @@ export async function sendMessage(
         thinkingEnabled,
         tools,
         continuationMessages: continuationMessages.length > 0 ? continuationMessages : undefined,
+        userId,
       })
 
       const { content, reasoning, thinkingBlocks, toolCalls, stopReason } = await streamSSE({

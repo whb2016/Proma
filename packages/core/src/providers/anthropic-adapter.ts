@@ -7,6 +7,7 @@
  * - 图片格式：{ type: 'image', source: { type: 'base64', media_type, data } }
  * - SSE 解析：content_block_delta → text，thinking_delta → reasoning，tool_use 支持
  * - 认证：按供应商差异发送 api-key / x-api-key / Authorization
+ * - Prompt caching：只对部分渠道发 cache_control（见 PROMPT_CACHE_PROVIDERS）
  * - 同时适配 Anthropic 原生 API、DeepSeek、Kimi API、Kimi Coding Plan、MiniMax
  *
  * 思考模式按模型能力分支（见 thinking-capability.ts）：
@@ -41,10 +42,17 @@ import { getPromaUserAgent } from './user-agent.ts'
 
 // ===== Anthropic 特有类型 =====
 
+/** prompt caching 断点标记（打在哪个块上，就缓存到该块为止的整个前缀） */
+interface AnthropicCacheControl {
+  type: 'ephemeral'
+}
+
 /** Anthropic 内容块（扩展支持 tool_use / tool_result） */
 interface AnthropicContentBlock {
   type: 'text' | 'image' | 'tool_use' | 'tool_result' | 'thinking'
   text?: string
+  /** 缓存断点；见 PROMPT_CACHE_PROVIDERS */
+  cache_control?: AnthropicCacheControl
   source?: {
     type: 'base64'
     media_type: string
@@ -68,6 +76,13 @@ interface AnthropicContentBlock {
 interface AnthropicMessage {
   role: 'user' | 'assistant'
   content: string | AnthropicContentBlock[]
+}
+
+/** body.system 的结构化形式（要打缓存断点时必须用块数组，纯字符串挂不上 cache_control） */
+interface AnthropicSystemBlock {
+  type: 'text'
+  text: string
+  cache_control?: AnthropicCacheControl
 }
 
 /** Anthropic SSE 事件 */
@@ -101,6 +116,50 @@ interface AnthropicTitleResponse {
     text?: string
     thinking?: string
   }>
+}
+
+// ===== Prompt Caching =====
+
+/**
+ * 只对这些渠道发 `cache_control`。
+ *
+ * 缓存断点是 Anthropic 官方协议字段，但各兼容端点实现到什么程度不明 ——
+ * 严格校验未知字段的服务端会直接 400，为省钱把能正常聊的渠道打挂不值得。
+ * 而且国产渠道（DeepSeek / 智谱 / Kimi / 通义）基本都是**服务端自动**做前缀缓存、
+ * 不需要客户端传参，漏掉它们并不损失什么。
+ * 某个渠道实测过不报错之后，往这里加一行即可。
+ */
+const PROMPT_CACHE_PROVIDERS = new Set<ProviderType>([
+  'anthropic',
+  'anthropic-compatible',
+])
+
+/** 断点标记常量。协议上限是每请求 4 个，这里固定用 2 个：system 前缀 + 消息末尾。 */
+const CACHE_CONTROL_EPHEMERAL: AnthropicCacheControl = { type: 'ephemeral' }
+
+/**
+ * 把缓存断点打在最后一条消息的最后一个块上。
+ *
+ * 打末尾就等于缓存「tools + system + 全部历史」这一整段前缀：下一轮请求的断点会
+ * 往前回溯命中这次写入的条目，于是每轮只为新增的那几个块付全价（读缓存约 0.1 倍，
+ * 写缓存 1.25 倍，两轮即回本）。
+ *
+ * 纯字符串 content 挂不上 cache_control，要就地包成 text 块 —— 但空串不能包，
+ * 服务端会拒绝空的 text 块，这种（异常）情况直接跳过不打断点。
+ */
+function markCacheBreakpoint(messages: AnthropicMessage[]): void {
+  const last = messages[messages.length - 1]
+  if (!last) return
+
+  if (typeof last.content === 'string') {
+    if (!last.content) return
+    last.content = [{ type: 'text', text: last.content, cache_control: CACHE_CONTROL_EPHEMERAL }]
+    return
+  }
+
+  const lastBlock = last.content[last.content.length - 1]
+  if (!lastBlock) return
+  lastBlock.cache_control = CACHE_CONTROL_EPHEMERAL
 }
 
 // ===== 消息转换 =====
@@ -307,6 +366,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     const url = this.resolveMessagesUrl(input.baseUrl)
     const messages = toAnthropicMessages(input)
     const capability = detectThinkingCapability(this.providerType, input.modelId)
+    const cacheEnabled = PROMPT_CACHE_PROVIDERS.has(this.providerType)
 
     // manual 模式：budget_tokens 必须 < max_tokens，所以开启时放大上限
     // adaptive / effort-based 模式：max_tokens 作为「思考+回答」的总硬上限，给充足空间
@@ -360,7 +420,12 @@ export class AnthropicAdapter implements ProviderAdapter {
     }
 
     if (input.systemMessage) {
-      body.system = input.systemMessage
+      // 系统提示词是跨对话不变的前缀，能缓存就单独给一个断点（tools 排在 system
+      // 之前，所以这一个断点同时把工具定义也缓存进去了）。前缀不够长时服务端静默
+      // 不缓存，不报错也不额外收费，因此无需自己判断长度。
+      body.system = cacheEnabled
+        ? [{ type: 'text', text: input.systemMessage, cache_control: CACHE_CONTROL_EPHEMERAL } satisfies AnthropicSystemBlock]
+        : input.systemMessage
     }
 
     // 工具定义
@@ -368,9 +433,24 @@ export class AnthropicAdapter implements ProviderAdapter {
       body.tools = toAnthropicTools(input.tools)
     }
 
+    // 用户标识（与 Agent 模式同源，见 agent-request-metadata.ts）：
+    // Anthropic 的 metadata.user_id 供上游做滥用追踪与限流，兼容端点不认这个字段
+    // 会直接忽略，所以不按渠道判断。它不属于提示词前缀，不影响缓存命中。
+    if (input.userId) {
+      body.metadata = { user_id: input.userId }
+    }
+
     // 工具续接消息
     if (input.continuationMessages && input.continuationMessages.length > 0) {
       appendContinuationMessages(messages, input.continuationMessages, !!input.thinkingEnabled)
+    }
+
+    // 消息侧的断点必须等续接消息追加完再打 —— 它要落在整个请求的最后一个块上。
+    //
+    // 只有一条消息时不打：那是一次全新的单轮提问，写入的缓存没有下一轮来读，
+    // 只会白付 1.25 倍写入费。从第二轮（或工具续接的第二次请求）起才开始缓存。
+    if (cacheEnabled && messages.length > 1) {
+      markCacheBreakpoint(messages)
     }
 
     const requestBody = JSON.stringify(body)
